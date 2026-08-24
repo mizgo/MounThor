@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Packaging / build output
+build/
+dist/
+*.egg-info/
+
+# IDE / editors
+.vscode/
+.idea/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Local application configuration
+mounts.json
+
+# Local development files
+*.tmp
+*.bak
+_backups/
