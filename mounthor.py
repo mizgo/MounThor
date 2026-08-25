@@ -1596,7 +1596,9 @@ class MounThorApp(
             "Application exiting."
         )
 
-        super().do_shutdown()
+        Gio.Application.do_shutdown(
+            self
+        )
 
 
     # ------------------------------------------------------------------------
