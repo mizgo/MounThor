@@ -2587,6 +2587,42 @@ class MounThorApp(
 
         entry = row.entry
 
+        if (
+            entry.get(
+                "credential_storage"
+            )
+            == "secret-service"
+        ):
+
+            try:
+
+                password = _secure_load_password(
+                    entry["host"],
+                    entry["share"],
+                    _get_effective_username(
+                        entry
+                    ),
+                )
+
+            except Exception as exc:
+
+                LOGGER.warning(
+                    "Could not load SMB password "
+                    "from Secret Service: %s",
+                    exc,
+                )
+
+                password = None
+
+            if password:
+
+                self._mount(
+                    row,
+                    password,
+                )
+
+                return
+
         dialog = Adw.Dialog()
 
         dialog.set_title(
