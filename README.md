@@ -41,6 +41,8 @@ The interface follows the system's GTK light and dark themes and respects the co
 ### Security
 MounThor uses the Freedesktop Secret Service API for secure credential storage when available. If Secret Service is not available, MounThor can still be used without saving passwords, or the user can explicitly choose to save a password unencrypted.
 
+Versions prior to 0.8.0 store saved passwords in the JSON configuration file. When upgrading to 0.8.0 or later, MounThor will offer to migrate passwords stored in the configuration file to Secret Service when the corresponding share is mounted.
+
 ## Requirements
 
 - Linux

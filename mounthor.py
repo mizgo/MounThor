@@ -4667,6 +4667,36 @@ class MounThorApp(
 
                     return
 
+            if (
+                entry.get(
+                    "credential_storage"
+                )
+                == "secret-service"
+            ):
+
+                try:
+
+                    _secure_delete_password(
+                        entry["host"],
+                        entry["share"],
+                        _get_effective_username(
+                            entry
+                        ),
+                    )
+
+                except Exception as exc:
+
+                    GLib.idle_add(
+                        self._delete_failed,
+                        row,
+                        (
+                            "cannot remove stored "
+                            f"credential: {exc}"
+                        ),
+                    )
+
+                    return
+
             cfg = load_config()
 
             cfg["mounts"] = [
