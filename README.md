@@ -21,6 +21,7 @@ The app provides batch actions for connecting and disconnecting all shares or se
 The interface follows the system's GTK light and dark themes and respects the configured accent color.
 
 The goal is to provide a simple and elegant GUI for managing CIFS/SMB mounts without maintaining persistent mounts through /etc/fstab or systemd units."
+
 ## Features
 - Save frequently used SMB shares and their mount settings.
 - Mount and unmount shares individually with a toggle.
@@ -36,13 +37,27 @@ The goal is to provide a simple and elegant GUI for managing CIFS/SMB mounts wit
 - Automatically clean up temporary CIFS credential files left after an unexpected application exit.
 - GTK4/libadwaita interface supporting system light and dark themes and the configured accent color.
 - Responsive status feedback with spinners, icons, toasts, and logging.
+
 ## Requirements
+
 - Linux
-- Python ...
+- Python 3
 - GTK4
 - libadwaita
 - cifs-utils
-- polkit / pkexec
+- polkit (pkexec)
+
+## Development
+
+MounThor is currently developed and tested with:
+
+- Python 3.14
+- GTK 4.23
+- libadwaita 1.10 (beta)
+- GLib 2.89
+- cifs-utils 7.4
+- polkit 124
+
 ## Installation
 
 Download the latest MounThor release archive and extract it.
