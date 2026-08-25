@@ -44,6 +44,52 @@ The goal is to provide a simple and elegant GUI for managing CIFS/SMB mounts wit
 - cifs-utils
 - polkit / pkexec
 ## Installation
-...
+
+Download the latest MounThor release archive and extract it.
+
+### Install
+
+Open a terminal in the extracted MounThor directory and run:
+
+```bash
+./scripts/install-mounthor.sh
+```
+
+The installer installs MounThor for the current user:
+
+* `~/.local/bin/mounthor` — application launcher
+* `~/.local/share/mounthor/` — application files
+* `~/.local/share/applications/io.github.mizgo.MounThor.desktop` — application menu entry
+
+No administrator privileges are required.
+
+After installation, MounThor should appear in your desktop environment's application menu. If it does not appear immediately, reopen the application launcher or allow a few moments for the desktop menu to refresh.
+
+### Upgrade
+
+To upgrade an existing installation, download and extract the newer release and run the same installer:
+
+```bash
+./scripts/install-mounthor.sh
+```
+
+The installer automatically replaces the installed application files.
+
+Your saved shares, configuration, and application logs are preserved during upgrades.
+
+### Uninstall
+
+From the extracted MounThor directory, run:
+
+```bash
+./scripts/uninstall-mounthor.sh
+```
+
+The uninstaller removes the MounThor application files and desktop entry.
+
+Your saved shares, credentials, configuration, and logs are kept by default. The uninstaller will ask whether you also want to remove them.
+
+No administrator privileges are required.
+
 ## License
 MounThor is licensed under the GNU GPL v3.0.
