@@ -4294,7 +4294,7 @@ class MounThorApp(
 
         about.set_release_notes(
             "<p>New in this version:</p>"
-            "<p>Preparing the project for GitHub publication.</p>"
+            "<p>First GitHub release.</p>"
             "<ul>"
                 "<li>Defined app name and license.</li>"
                 "<li>Added cleanup of temporary CIFS credential files after an unexpected application exit.</li>"
@@ -4363,6 +4363,10 @@ class MounThorApp(
 
         about.set_release_notes_version(
             APP_VERSION
+        )
+
+        about.set_website(
+            "https://github.com/mizgo/MounThor"
         )
 
         about.set_comments(
