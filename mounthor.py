@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import secrets
+import secretstorage
 import subprocess
 import sys
 import threading
@@ -38,7 +39,7 @@ LOGGER = logging.getLogger(
 APP_ID = "io.github.mizgo.MounThor"
 
 APP_NAME = "MounThor"
-APP_VERSION = "0.7.0"
+APP_VERSION = "0.8.0"
 APP_RELEASE_DATE = "25 August 2026"
 APP_AUTHOR = "mizgo"
 
@@ -136,6 +137,158 @@ def _configure_logging() -> None:
 
 
 # ============================================================================
+# Credential storage
+# ============================================================================
+
+CREDENTIAL_SERVICE = "MounThor"
+
+
+def _secret_service_connection():
+    return secretstorage.dbus_init()
+
+
+def _secret_service_collection(
+    connection,
+):
+
+    collection = (
+        secretstorage.get_default_collection(
+            connection
+        )
+    )
+
+    if collection.is_locked():
+
+        collection.unlock()
+
+    return collection
+
+
+def _secret_service_attributes(
+    host: str,
+    share: str,
+    username: str,
+) -> dict:
+
+    return {
+        "service": CREDENTIAL_SERVICE,
+        "host": host,
+        "share": share,
+        "username": username,
+    }
+
+
+def _secure_storage_available() -> bool:
+
+    try:
+
+        connection = _secret_service_connection()
+
+        _secret_service_collection(
+            connection
+        )
+
+        return True
+
+    except Exception:
+
+        return False
+
+def _secure_store_password(
+    host: str,
+    share: str,
+    username: str,
+    password: str,
+) -> None:
+
+    connection = _secret_service_connection()
+
+    collection = _secret_service_collection(
+        connection
+    )
+
+    attributes = _secret_service_attributes(
+        host,
+        share,
+        username,
+    )
+
+    label = (
+        f"MounThor SMB password for "
+        f"//{host}/{share}"
+    )
+
+    collection.create_item(
+        label,
+        attributes,
+        password.encode(
+            "utf-8"
+        ),
+        replace=True,
+    )
+
+def _secure_load_password(
+    host: str,
+    share: str,
+    username: str,
+) -> str | None:
+
+    connection = _secret_service_connection()
+
+    collection = _secret_service_collection(
+        connection
+    )
+
+    attributes = _secret_service_attributes(
+        host,
+        share,
+        username,
+    )
+
+    items = collection.search_items(
+        attributes
+    )
+
+    for item in items:
+
+        if item.is_locked():
+
+            item.unlock()
+
+        return item.get_secret().decode(
+            "utf-8"
+        )
+
+    return None
+
+def _secure_delete_password(
+    host: str,
+    share: str,
+    username: str,
+) -> None:
+
+    connection = _secret_service_connection()
+
+    collection = _secret_service_collection(
+        connection
+    )
+
+    attributes = _secret_service_attributes(
+        host,
+        share,
+        username,
+    )
+
+    items = collection.search_items(
+        attributes
+    )
+
+    for item in items:
+
+        item.delete()
+
+
+# ============================================================================
 # Configuration management
 # ============================================================================
 
@@ -176,6 +329,30 @@ def load_config() -> dict:
     ):
 
         cfg["mounts"] = []
+
+    for mount in cfg["mounts"]:
+
+        if not isinstance(
+            mount,
+            dict,
+        ):
+
+            continue
+
+        if "credential_storage" not in mount:
+
+            password = (
+                mount.get(
+                    "password"
+                )
+                or ""
+            )
+
+            mount["credential_storage"] = (
+                "plaintext"
+                if password
+                else "none"
+            )
 
     return cfg
 
@@ -238,6 +415,24 @@ def entry_from_data(
 
         name = f"{host}/{share}"
 
+    password = (
+        data.get(
+            "password"
+        )
+        or ""
+    )
+
+    credential_storage = (
+        data.get(
+            "credential_storage"
+        )
+        or (
+            "plaintext"
+            if password
+            else "none"
+        )
+    )
+
     return {
         "id": secrets.token_hex(8),
         "name": name,
@@ -251,10 +446,8 @@ def entry_from_data(
             data.get("username")
             or ""
         ).strip(),
-        "password": (
-            data.get("password")
-            or ""
-        ),
+        "password": password,
+        "credential_storage": credential_storage,
         "options": (
             data.get("options")
             or ""
@@ -266,6 +459,21 @@ def entry_from_data(
             )
         ),
     }
+
+
+# ============================================================================
+# Login helpers
+# ============================================================================
+
+def _get_effective_username(
+    entry,
+) -> str:
+
+    return (
+        entry.get("username")
+        or os.environ.get("USER")
+        or "guest"
+    )
 
 
 # ============================================================================
@@ -529,10 +737,8 @@ def do_mount(
         f"cifs-creds-{secrets.token_hex(16)}",
     )
 
-    username = (
-        entry.get("username")
-        or os.environ.get("USER")
-        or "guest"
+    username = _get_effective_username(
+        entry
     )
 
     if uid is None:
@@ -2438,11 +2644,9 @@ class MounThorApp(
         remember_row = Adw.SwitchRow(
             title="Remember password",
             subtitle=(
-                "Store the password in mounts.json "
-                "for future mounts."
+                "Store the password for future mounts."
             ),
         )
-
         remember_list.append(
             remember_row
         )
@@ -2470,6 +2674,139 @@ class MounThorApp(
 
             dialog.close()
 
+        def complete_connect(
+            password,
+            credential_storage,
+        ):
+
+            try:
+
+                if credential_storage == "secret-service":
+
+                    _secure_store_password(
+                        entry["host"],
+                        entry["share"],
+                        _get_effective_username(
+                            entry
+                        ),
+                        password,
+                    )
+
+                    entry["password"] = ""
+
+                elif credential_storage == "plaintext":
+
+                    entry["password"] = password
+
+                else:
+
+                    _secure_delete_password(
+                        entry["host"],
+                        entry["share"],
+                        _get_effective_username(
+                            entry
+                        ),
+                    )
+
+                    entry["password"] = ""
+
+                entry[
+                    "credential_storage"
+                ] = credential_storage
+
+                self.save_current_rows()
+
+            except Exception as exc:
+
+                self.toast(
+                    f"Could not save password: {exc}",
+                    error=True,
+                )
+
+                return False
+
+            dialog.close()
+
+            self._mount(
+                row,
+                password,
+            )
+
+            return True
+
+        def ask_insecure_storage(
+            password,
+        ):
+
+            alert = Adw.AlertDialog(
+                heading=(
+                    "Secure Credential Storage unavailable"
+                ),
+                body=(
+                    "Secure Credential Storage is not "
+                    "available on this system. "
+                    "You can continue without saving "
+                    "the password, or save it unencrypted "
+                    "in MounThor's configuration."
+                ),
+            )
+
+            alert.add_response(
+                "cancel",
+                "Cancel",
+            )
+
+            alert.add_response(
+                "none",
+                "Don't remember",
+            )
+
+            alert.add_response(
+                "plaintext",
+                "Save without encryption",
+            )
+
+            alert.set_default_response(
+                "none"
+            )
+
+            alert.set_close_response(
+                "cancel"
+            )
+
+            alert.set_response_appearance(
+                "plaintext",
+                Adw.ResponseAppearance.DESTRUCTIVE,
+            )
+
+            def on_response(
+                _alert,
+                response,
+            ):
+
+                if response == "none":
+
+                    complete_connect(
+                        password,
+                        "none",
+                    )
+
+                elif response == "plaintext":
+
+                    complete_connect(
+                        password,
+                        "plaintext",
+                    )
+
+            alert.connect(
+                "response",
+                on_response,
+            )
+
+            alert.present(
+                self.win
+            )
+
         def on_connect(
             _button,
         ):
@@ -2487,29 +2824,35 @@ class MounThorApp(
 
                 return
 
-            if remember_row.get_active():
+            if not remember_row.get_active():
 
-                row.entry["password"] = password
+                complete_connect(
+                    password,
+                    "none",
+                )
 
-                try:
+                return
 
-                    self.save_current_rows()
+            try:
 
-                except OSError as exc:
+                if _secure_storage_available():
 
-                    self.toast(
-                        f"Could not save password: {exc}",
-                        error=True,
+                    complete_connect(
+                        password,
+                        "secret-service",
                     )
 
-                    return
+                else:
 
-            dialog.close()
+                    ask_insecure_storage(
+                        password
+                    )
 
-            self._mount(
-                row,
-                password,
-            )
+            except Exception:
+
+                ask_insecure_storage(
+                    password
+                )
 
         cancel_button.connect(
             "clicked",
@@ -3058,8 +3401,7 @@ class MounThorApp(
         remember_row = Adw.SwitchRow(
             title="Remember password",
             subtitle=(
-                "Store the password in mounts.json "
-                "for future mounts."
+                "Store the password for future mounts."
             ),
         )
 
@@ -4295,6 +4637,10 @@ class MounThorApp(
         about.set_release_notes(
             "<p>New in this version:</p>"
             "<p>First GitHub release.</p>"
+            "<ul>"
+                "<li>Added secure password storage.</li>"
+            "</ul>"
+            "<p>New in 0.7.0 release:</p>"
             "<ul>"
                 "<li>Defined app name and license.</li>"
                 "<li>Added cleanup of temporary CIFS credential files after an unexpected application exit.</li>"
