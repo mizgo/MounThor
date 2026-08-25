@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
+
+exec python3 \
+    "${XDG_DATA_HOME}/mounthor/mounthor.py" \
+    "$@"

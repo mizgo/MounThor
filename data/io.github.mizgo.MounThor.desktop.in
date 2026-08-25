@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=MounThor
+Comment=CIFS/SMB mount manager for Linux
+Exec=@MOUNTHOR_EXEC@
+Icon=folder-remote-symbolic
+Terminal=false
+Type=Application
+Categories=Network;
+StartupNotify=true
