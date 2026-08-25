@@ -39,7 +39,7 @@ APP_ID = "io.github.mizgo.MounThor"
 
 APP_NAME = "MounThor"
 APP_VERSION = "0.7.0"
-APP_RELEASE_DATE = "24 August 2026"
+APP_RELEASE_DATE = "25 August 2026"
 APP_AUTHOR = "mizgo"
 
 CONFIG_DIR = (
