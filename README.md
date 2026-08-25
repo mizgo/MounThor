@@ -38,6 +38,9 @@ The interface follows the system's GTK light and dark themes and respects the co
 - GTK4/libadwaita interface supporting system light and dark themes and the configured accent color.
 - Responsive status feedback with spinners, icons, toasts, and logging.
 
+### Security
+MounThor uses the Freedesktop Secret Service API for secure credential storage when available. If Secret Service is not available, MounThor can still be used without saving passwords, or the user can explicitly choose to save a password unencrypted.
+
 ## Requirements
 
 - Linux

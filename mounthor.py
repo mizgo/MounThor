@@ -2405,26 +2405,9 @@ class MounThorApp(
 
         if mount:
 
-            saved_password = (
-                row.entry.get(
-                    "password",
-                    "",
-                )
-                or ""
+            self._ask_password(
+                row
             )
-
-            if not saved_password:
-
-                self._ask_password(
-                    row
-                )
-
-            else:
-
-                self._mount(
-                    row,
-                    saved_password,
-                )
 
         else:
 
@@ -2587,6 +2570,112 @@ class MounThorApp(
 
         entry = row.entry
 
+        def migrate_plaintext_password(
+            password,
+        ):
+
+            try:
+
+                if not _secure_storage_available():
+
+                    return False
+
+                _secure_store_password(
+                    entry["host"],
+                    entry["share"],
+                    _get_effective_username(
+                        entry
+                    ),
+                    password,
+                )
+
+                entry["password"] = ""
+
+                entry[
+                    "credential_storage"
+                ] = "secret-service"
+
+                self.save_current_rows()
+
+                return True
+
+            except Exception as exc:
+
+                LOGGER.warning(
+                    "Could not migrate SMB password "
+                    "to Secret Service: %s",
+                    exc,
+                )
+
+                return False
+        
+        def ask_migrate_plaintext_password(
+            password,
+        ):
+
+            alert = Adw.AlertDialog(
+                heading=(
+                    "Password stored without encryption"
+                ),
+                body=(
+                    "This SMB password is currently "
+                    "stored unencrypted in MounThor's "
+                    "configuration. "
+                    "Secure Credential Storage is "
+                    "available and can be used instead."
+                ),
+            )
+
+            alert.add_response(
+                "keep",
+                "Keep as is",
+            )
+
+            alert.add_response(
+                "migrate",
+                "Move to Secure Storage",
+            )
+
+            alert.set_default_response(
+                "migrate"
+            )
+
+            def on_response(
+                _alert,
+                response,
+            ):
+
+                if response == "migrate":
+
+                    if migrate_plaintext_password(
+                        password
+                    ):
+
+                        self.toast(
+                            "Password moved to Secure Credential Storage."
+                        )
+
+                    else:
+
+                        self.toast(
+                            "Could not move password to Secure Credential Storage.",
+                            error=True,
+                        )
+
+                self._mount(
+                    row,
+                    password,
+                )
+
+            alert.connect(
+                "response",
+                on_response,
+            )
+
+            alert.present(
+                self.win
+            )
+
         if (
             entry.get(
                 "credential_storage"
@@ -2620,6 +2709,37 @@ class MounThorApp(
                     row,
                     password,
                 )
+
+                return
+
+        if (
+            entry.get(
+                "credential_storage"
+            )
+            == "plaintext"
+        ):
+
+            password = (
+                entry.get(
+                    "password"
+                )
+                or ""
+            )
+
+            if password:
+
+                if _secure_storage_available():
+
+                    ask_migrate_plaintext_password(
+                        password
+                    )
+
+                else:
+
+                    self._mount(
+                        row,
+                        password,
+                    )
 
                 return
 
