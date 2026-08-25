@@ -1,6 +1,19 @@
 # MounThor
 CIFS/SMB mount manager for Linux.
-[screenshot]
+
+<table>
+  <tr>
+    <td align="center">
+      <strong>Dark theme</strong><br>
+      <img src="data/screenshots/main-window_dark.png" alt="MounThor in dark theme" width="400">
+    </td>
+    <td align="center">
+      <strong>Light theme</strong><br>
+      <img src="data/screenshots/main-window_light.png" alt="MounThor in light theme" width="400">
+    </td>
+  </tr>
+</table>
+
 A simple GTK4/libadwaita GUI for mounting SMB shares on Linux using the kernel's CIFS/SMB filesystem client.
 
 Save frequently used shares along with their mount settings and connect them with just a few clicks. For credentials, you can either save them in the application's configuration file or enter the password each time a share is mounted. You can also use your current Linux account name as the SMB username without storing it in the configuration.

@@ -1670,7 +1670,7 @@ class MounThorApp(
         )
 
         menu.append(
-            "Deselect All",
+            "Clear Selection",
             "app.deselect-all",
         )
 
@@ -4297,6 +4297,7 @@ class MounThorApp(
                 "<li>Defined app name and license.</li>"
                 "<li>Added cleanup of temporary CIFS credential files after an unexpected application exit.</li>"
                 "<li>Added basic logging.</li>"
+                "<li>Renamed Deselect All button to Clear Selection</li>"
             "</ul>"
             "<p>New in 0.6.3 pre-release:</p>"
             "<ul>"
