@@ -20,7 +20,7 @@ Save frequently used shares along with their mount settings and connect them wit
 The app provides batch actions for connecting and disconnecting all shares or selected shares, allowing you to authenticate with your superuser password once and apply the action to multiple shares. Individual shares can also be configured to automatically mount when the application starts.
 The interface follows the system's GTK light and dark themes and respects the configured accent color.
 
-**The goal is to provide a simple and elegant GUI built with GTK4 and libadwaita for managing CIFS/SMB mounts without maintaining persistent mounts through `/etc/fstab` or systemd units.**
+**The goal is to provide a simple and elegant GUI built with GTK4 and libadwaita for managing CIFS/SMB mounts without repeatedly entering long mount commands and credentials or writing custom scripts for shares that do not need to be persistent.**
 
 ## Features
 - Save frequently used SMB shares and their mount settings.
