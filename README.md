@@ -29,7 +29,7 @@ The interface follows the system's GTK light and dark themes and respects the co
 - Connect All and Disconnect All actions.
 - Clear Selection for quickly deselecting multiple shares.
 - Batch password handling with a single superuser authentication.
-- Optionally remember SMB passwords in the application configuration.
+- Optionally remember SMB passwords for future mounts.
 - Use the current Linux account name as the SMB username without storing it.
 - Configure custom CIFS mount options such as vers=3.1.1.
 - Configure shares to automount when MounThor starts.

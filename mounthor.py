@@ -40,7 +40,7 @@ APP_ID = "io.github.mizgo.MounThor"
 
 APP_NAME = "MounThor"
 APP_VERSION = "0.8.0"
-APP_RELEASE_DATE = "25 August 2026"
+APP_RELEASE_DATE = "26 August 2026"
 APP_AUTHOR = "mizgo"
 
 CONFIG_DIR = (
@@ -4385,6 +4385,33 @@ class MounThorApp(
 
             cfg = load_config()
 
+            old_credential_storage = "none"
+            old_effective_username = ""
+            credential_identity_changed = False
+
+            old_entry = None
+
+            if (
+                row is not None
+                and not is_duplicate
+            ):
+
+                old_entry = next(
+                    (
+                        mount
+                        for mount in cfg["mounts"]
+                        if (
+                            isinstance(
+                                mount,
+                                dict,
+                            )
+                            and mount.get("id")
+                            == row.entry["id"]
+                        )
+                    ),
+                    None,
+                )
+
             if (
                 row is not None
                 and not is_duplicate
@@ -4413,11 +4440,80 @@ class MounThorApp(
                             or ""
                         )
 
+                        old_effective_username = (
+                            _get_effective_username(
+                                old_entry
+                            )
+                            if old_entry
+                            else ""
+                        )
+
+                        new_entry_for_identity = {
+                            **data,
+                        }
+
+                        new_effective_username = (
+                            _get_effective_username(
+                                new_entry_for_identity
+                            )
+                        )
+
+                        credential_identity_changed = (
+                            old_entry is not None
+                            and (
+                                old_entry.get(
+                                    "host",
+                                    "",
+                                )
+                                != data["host"]
+                                or old_entry.get(
+                                    "share",
+                                    "",
+                                )
+                                != data["share"]
+                                or old_effective_username
+                                != new_effective_username
+                            )
+                        )
+
+                        existing_credential_storage = (
+                            mount.get(
+                                "credential_storage"
+                            )
+                            or (
+                                "plaintext"
+                                if existing_password
+                                else "none"
+                            )
+                        )
+
+                        old_credential_storage = (
+                            existing_credential_storage
+                        )
+
+                        if credential_identity_changed:
+
+                            new_password = ""
+                            new_credential_storage = "none"
+
+                        else:
+
+                            new_password = (
+                                existing_password
+                            )
+
+                            new_credential_storage = (
+                                existing_credential_storage
+                            )
+
                         cfg["mounts"][index] = {
                             **mount,
                             **data,
                             "id": row.entry["id"],
-                            "password": existing_password,
+                            "password": new_password,
+                            "credential_storage": (
+                                new_credential_storage
+                            ),
                         }
 
                         found = True
@@ -4431,6 +4527,7 @@ class MounThorApp(
                             **data,
                             "id": row.entry["id"],
                             "password": "",
+                            "credential_storage": "none",
                         }
                     )
 
@@ -4459,6 +4556,28 @@ class MounThorApp(
                 )
 
                 return
+
+            if (
+                credential_identity_changed
+                and old_credential_storage
+                == "secret-service"
+            ):
+
+                try:
+
+                    _secure_delete_password(
+                        old_entry["host"],
+                        old_entry["share"],
+                        old_effective_username,
+                    )
+
+                except Exception as exc:
+
+                    LOGGER.warning(
+                        "Could not remove old SMB "
+                        "credential from Secret Service: %s",
+                        exc,
+                    )
 
             dialog.close()
 
@@ -4822,7 +4941,7 @@ class MounThorApp(
 
         about.set_release_notes(
             "<p>New in this version:</p>"
-            "<p>First GitHub release.</p>"
+            "<p>Passwords are now stored securely using the Freedesktop Secret Service API for credential storage.</p>"
             "<ul>"
                 "<li>Added secure password storage.</li>"
             "</ul>"
