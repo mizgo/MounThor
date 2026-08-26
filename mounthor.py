@@ -2419,6 +2419,7 @@ class MounThorApp(
         self,
         row: MountRow,
         password: str,
+        credential_storage=None,
     ):
 
         row.set_busy(
@@ -2437,6 +2438,8 @@ class MounThorApp(
                 row,
                 ok,
                 message,
+                password,
+                credential_storage,
             )
 
         threading.Thread(
@@ -2450,6 +2453,8 @@ class MounThorApp(
         row,
         ok,
         message,
+        password,
+        credential_storage,
     ):
 
         row.set_busy(
@@ -2463,6 +2468,57 @@ class MounThorApp(
                 row.entry.get("host", ""),
                 row.entry.get("share", ""),
             )
+
+            if credential_storage is not None:
+
+                try:
+
+                    if credential_storage == "secret-service":
+
+                        _secure_store_password(
+                            row.entry["host"],
+                            row.entry["share"],
+                            _get_effective_username(
+                                row.entry
+                            ),
+                            password,
+                        )
+
+                        row.entry["password"] = ""
+
+                    elif credential_storage == "plaintext":
+
+                        row.entry["password"] = password
+
+                    else:
+
+                        _secure_delete_password(
+                            row.entry["host"],
+                            row.entry["share"],
+                            _get_effective_username(
+                                row.entry
+                            ),
+                        )
+
+                        row.entry["password"] = ""
+
+                    row.entry[
+                        "credential_storage"
+                    ] = credential_storage
+
+                    self.save_current_rows()
+
+                except Exception as exc:
+
+                    LOGGER.error(
+                        "Could not save SMB credential: %s",
+                        exc,
+                    )
+
+                    self.toast(
+                        f"Mounted, but could not save password: {exc}",
+                        error=True,
+                    )
 
             row.set_mounted(
                 True
@@ -2647,25 +2703,19 @@ class MounThorApp(
 
                 if response == "migrate":
 
-                    if migrate_plaintext_password(
-                        password
-                    ):
+                    self._mount(
+                        row,
+                        password,
+                        "secret-service",
+                    )
 
-                        self.toast(
-                            "Password moved to Secure Credential Storage."
-                        )
+                elif response == "keep":
 
-                    else:
-
-                        self.toast(
-                            "Could not move password to Secure Credential Storage.",
-                            error=True,
-                        )
-
-                self._mount(
-                    row,
-                    password,
-                )
+                    self._mount(
+                        row,
+                        password,
+                        "plaintext",
+                    )
 
             alert.connect(
                 "response",
@@ -2739,6 +2789,7 @@ class MounThorApp(
                     self._mount(
                         row,
                         password,
+                        None,
                     )
 
                 return
@@ -2835,60 +2886,13 @@ class MounThorApp(
             credential_storage,
         ):
 
-            try:
-
-                if credential_storage == "secret-service":
-
-                    _secure_store_password(
-                        entry["host"],
-                        entry["share"],
-                        _get_effective_username(
-                            entry
-                        ),
-                        password,
-                    )
-
-                    entry["password"] = ""
-
-                elif credential_storage == "plaintext":
-
-                    entry["password"] = password
-
-                else:
-
-                    _secure_delete_password(
-                        entry["host"],
-                        entry["share"],
-                        _get_effective_username(
-                            entry
-                        ),
-                    )
-
-                    entry["password"] = ""
-
-                entry[
-                    "credential_storage"
-                ] = credential_storage
-
-                self.save_current_rows()
-
-            except Exception as exc:
-
-                self.toast(
-                    f"Could not save password: {exc}",
-                    error=True,
-                )
-
-                return False
-
             dialog.close()
 
             self._mount(
                 row,
                 password,
+                credential_storage,
             )
-
-            return True
 
         def ask_insecure_storage(
             password,
