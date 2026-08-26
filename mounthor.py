@@ -4947,7 +4947,9 @@ class MounThorApp(
             "<p>New in this version:</p>"
             "<p>Passwords are now stored securely using the Freedesktop Secret Service API for credential storage.</p>"
             "<ul>"
-                "<li>Added secure password storage.</li>"
+                "<li>Added secure password storage using the Freedesktop Secret Service API.</li>"
+                "<li>Save credentials only after a successful mount.</li>"
+                "<li>Added migration of plaintext passwords to secure storage.</li>"
             "</ul>"
             "<p>New in 0.7.0 release:</p>"
             "<ul>"
@@ -5027,11 +5029,11 @@ class MounThorApp(
         about.set_comments(
             f"<b>{APP_NAME} {APP_VERSION}</b>\n"
             f"Release date: {APP_RELEASE_DATE}\n\n"
-            "A simple GTK4/libadwaita GUI for mounting SMB shares on Linux using the kernel's CIFS/SMB filesystem client.\n\n"
+            "A simple Linux desktop application for fast and convenient SMB network share mounting.\n\n"
             "Save frequently used shares along with their mount settings and connect them with just a few clicks. For credentials, you can either save them in the application's configuration file or enter the password each time a share is mounted. You can also use your current Linux account name as the SMB username without storing it in the configuration.\n\n"
-            "The app provides batch actions for connecting and disconnecting all shares or selected shares, allowing you to authenticate with your superuser password once and apply the action to multiple shares. Individual shares can also be configured to automatically mount when the application starts.\n\n"
-            "The interface follows the system's GTK light and dark themes and respects the configured accent color."
-            "The goal is to provide a simple and elegant GUI for managing CIFS/SMB mounts without maintaining persistent mounts through /etc/fstab or systemd units."
+            "The app provides batch actions for connecting and disconnecting all shares or selected shares, allowing you to authenticate with your superuser password once and apply the action to multiple shares. Individual shares can also be configured to automatically mount when the application starts.\n"
+            "The interface follows the system's GTK light and dark themes and respects the configured accent color.\n\n"
+            "The goal is to provide a simple and elegant GUI built with GTK4 and libadwaita for managing CIFS/SMB mounts without repeatedly entering long mount commands and credentials or writing custom scripts for shares that do not need to be persistent."
         )
 
         about.set_license_type(
