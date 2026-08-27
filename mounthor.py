@@ -2711,7 +2711,14 @@ class MounThorApp(
 
                 # "keep" → do nothing, existing mount stays
                 row.set_mounted(
-                    False
+                    is_mounted(
+                        row.entry.get(
+                            "path",
+                            "",
+                        ),
+                        row.entry.get("host"),
+                        row.entry.get("share"),
+                    )
                 )
                 if on_after_close:
 
@@ -2752,27 +2759,15 @@ class MounThorApp(
 
             return
 
-        # Parse host/share from //host/share format
-        try:
+        without_scheme = (
+            existing_source[2:]
+            if existing_source.startswith("//")
+            else existing_source
+        )
 
-            # Remove leading '//' and split
-            without_scheme = (
-                existing_source[2:]
-                if existing_source.startswith(
-                    "//"
-                )
-                else existing_source
-            )
+        parts = without_scheme.split("/", 1)
 
-            parts = without_scheme.split("/", 1)
-            old_host = parts[0] if len(parts) > 0 else ""
-            old_share = (
-                parts[1].lstrip("/")
-                if len(parts) > 1
-                else ""
-            )
-
-        except Exception:
+        if len(parts) != 2 or not parts[0] or not parts[1]:
 
             self.toast(
                 "Could not parse existing mount source.",
@@ -2781,7 +2776,9 @@ class MounThorApp(
 
             return
 
-        # Build temporary entry for unmounting
+        old_host = parts[0]
+        old_share = parts[1].lstrip("/")
+
         temp_entry = {
             "path": path,
             "host": old_host,
@@ -3618,13 +3615,43 @@ class MounThorApp(
                 0,
             )
 
+    def _start_connect_all_clean(
+        self,
+        clean_rows,
+    ):
+
+        if not clean_rows:
+
+            return
+
+        self._batch_active = True
+
+        for row in clean_rows:
+
+            row.set_busy(
+                True
+            )
+
+        self._collect_batch_passwords(
+            clean_rows,
+            0,
+            {},
+        )
+
     def _show_conflict_dialogs(
         self,
         conflict_rows: list[MountRow],
         index: int,
+        on_after_close=None,
     ):
 
         if index >= len(conflict_rows):
+
+            if on_after_close:
+
+                GLib.idle_add(
+                    on_after_close
+                )
 
             return
 
@@ -3638,6 +3665,7 @@ class MounThorApp(
                 self._show_conflict_dialogs,
                 conflict_rows,
                 index + 1,
+                on_after_close,
             )
 
         self._show_replace_dialog(
@@ -4011,18 +4039,36 @@ class MounThorApp(
 
             return
 
-        rows = [
-            row
-            for row in self.rows.values()
-            if not is_mounted(
-                row.entry.get(
-                    "path",
-                    "",
-                ),
-                row.entry.get("host"),
-                row.entry.get("share"),
-            )
-        ]
+        clean_rows = []
+        conflict_rows = []
+
+        for row in self.rows.values():
+
+            path = row.entry.get("path", "")
+            host = row.entry.get("host", "")
+            share = row.entry.get("share", "")
+
+            if is_mounted(
+                path,
+                host,
+                share,
+            ):
+
+                continue
+
+            if is_mounted(path):
+
+                conflict_rows.append(
+                    row
+                )
+
+            else:
+
+                clean_rows.append(
+                    row
+                )
+
+        rows = clean_rows + conflict_rows
 
         if not rows:
 
@@ -4045,18 +4091,20 @@ class MounThorApp(
 
             return
 
-        self._batch_active = True
+        if conflict_rows:
 
-        for row in rows:
-
-            row.set_busy(
-                True
+            self._show_conflict_dialogs(
+                conflict_rows,
+                0,
+                on_after_close=lambda: self._start_connect_all_clean(
+                    clean_rows
+                ),
             )
 
-        self._collect_batch_passwords(
-            rows,
-            0,
-            {},
+            return
+
+        self._start_connect_all_clean(
+            clean_rows
         )
 
     def _collect_batch_passwords(
@@ -5601,10 +5649,13 @@ class MounThorApp(
 
         about.set_release_notes(
             "<p>New in this version:</p>"
+            "<p>Layered mounting of multiple shares to the same mount path is now detected and prevented.</p>" 
+            "<p>MounThor now detects attempts to mount a share to a path that is already occupied. Depending on the situation, it can offer to replace the existing share mount with the requested one. For batch operations containing multiple mount requests targeting the same path, MounThor instead alerts the user to the conflict and does not perform the operation.</p>"
             "<ul>"
                 "<li>Fixed an issue where all shares using the same mount path were shown as mounted when only one of them was mounted.</li>"
                 "<li>Fixed an issue where an unmount operation on one share would incorrectly unmount all shares using the same mount path.</li>"
                 "<li>Connect Selected and Connect All now refuse to run when multiple shares use the same mount path, showing a dialog listing the conflicting shares instead.</li>"
+                "<li>Added mount conflict detection and a replacement dialog for single-share mounting, Connect Selected, and Connect All.</li>"
             "</ul>"
             "<p>New in 0.8.0 release:</p>"
             "<ul>"
