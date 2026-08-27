@@ -39,7 +39,7 @@ LOGGER = logging.getLogger(
 APP_ID = "io.github.mizgo.MounThor"
 
 APP_NAME = "MounThor"
-APP_VERSION = "0.8.0"
+APP_VERSION = "0.8.1"
 APP_RELEASE_DATE = "26 August 2026"
 APP_AUTHOR = "mizgo"
 
@@ -494,6 +494,8 @@ def _unescape_mount_field(
 
 def is_mounted(
     path: str,
+    host: str | None = None,
+    share: str | None = None,
 ) -> bool:
 
     if not path:
@@ -505,6 +507,24 @@ def is_mounted(
             path
         )
     )
+
+    # Normalize host/share for exact matching (lowercase, strip leading slashes)
+    norm_host = ""
+    norm_share = ""
+
+    if host is not None and share is not None:
+
+        norm_host = (
+            host.strip().lower()
+        )
+
+        norm_share = (
+            share.strip().lstrip("/").lower()
+        )
+
+        if not norm_host or not norm_share:
+
+            return False
 
     try:
 
@@ -525,12 +545,46 @@ def is_mounted(
 
                     continue
 
+                device = parts[0].strip()
                 mounted_path = (
                     _unescape_mount_field(
                         parts[1]
                     )
                 )
 
+                #Check Filesystem type
+                filesystem_type = (
+                    parts[2]
+                    if len(parts) >= 3
+                    else ""
+                )
+
+                if host is not None and share is not None:
+
+                    expected_device = (
+                        f"//{norm_host}/{norm_share}"
+                    )
+
+                    normalized_device = (
+                        device.lower()
+                    )
+
+                    if (
+                        filesystem_type.lower()
+                        == "cifs"
+                        and normalized_device
+                        == expected_device
+                        and os.path.realpath(
+                            mounted_path
+                        )
+                        == target
+                    ):
+
+                        return True
+
+                    continue
+
+                # Fallback / original behavior: match by mount point only.
                 mounted_path = os.path.realpath(
                     mounted_path
                 )
@@ -544,6 +598,127 @@ def is_mounted(
         pass
 
     return False
+
+def _get_topmost_mount_source(
+    path: str,
+) -> str | None:
+
+    if not path:
+
+        return None
+
+    target = os.path.realpath(
+        os.path.expanduser(
+            path
+        )
+    )
+
+    mounts = []
+
+    try:
+
+        with open(
+            "/proc/self/mountinfo",
+            "r",
+            encoding="utf-8",
+        ) as mountinfo:
+
+            for line in mountinfo:
+
+                fields = line.split(
+                    " - ",
+                    1,
+                )
+
+                if len(fields) != 2:
+
+                    continue
+
+                pre_separator = fields[0].split()
+                post_separator = fields[1].split()
+
+                if len(pre_separator) < 5:
+
+                    continue
+
+                if len(post_separator) < 2:
+
+                    continue
+
+                mount_id = int(
+                    pre_separator[0]
+                )
+
+                parent_id = int(
+                    pre_separator[1]
+                )
+
+                mounted_path = (
+                    _unescape_mount_field(
+                        pre_separator[4]
+                    )
+                )
+
+                mounted_path = os.path.realpath(
+                    mounted_path
+                )
+
+                if mounted_path != target:
+
+                    continue
+
+                filesystem_type = (
+                    post_separator[0]
+                )
+
+                source = (
+                    _unescape_mount_field(
+                        post_separator[1]
+                    )
+                )
+
+                mounts.append(
+                    {
+                        "id": mount_id,
+                        "parent_id": parent_id,
+                        "filesystem_type": filesystem_type,
+                        "source": source,
+                    }
+                )
+
+    except (
+        OSError,
+        ValueError,
+    ):
+
+        return None
+
+    if not mounts:
+
+        return None
+
+    mount_ids = {
+        mount["id"]
+        for mount in mounts
+    }
+
+    child_mount_ids = {
+        mount["parent_id"]
+        for mount in mounts
+        if mount["parent_id"] in mount_ids
+    }
+
+    topmost = [
+        mount
+        for mount in mounts
+        if mount["id"] not in child_mount_ids
+    ]
+
+    if len(topmost) != 1:
+
+        return None
+
+    return topmost[0]["source"]
 
 
 def _auth(
@@ -885,6 +1060,29 @@ def do_unmount(
     mountpoint = os.path.expanduser(
         path
     )
+
+    expected_source = (
+        f"//{entry.get('host', '').strip()}/"
+        f"{entry.get('share', '').strip().lstrip('/')}"
+    )
+
+    topmost_source = _get_topmost_mount_source(
+        mountpoint
+    )
+
+    if (
+        topmost_source is not None
+        and topmost_source.lower()
+        != expected_source.lower()
+    ):
+
+        return (
+            False,
+            (
+                "another mount is covering "
+                "this share's mount point"
+            ),
+        )
 
     command = [
         "/usr/bin/umount",
@@ -2216,7 +2414,9 @@ class MounThorApp(
                     entry.get(
                         "path",
                         "",
-                    )
+                    ),
+                    entry.get("host"),
+                    entry.get("share"),
                 )
             )
 
@@ -2325,7 +2525,9 @@ class MounThorApp(
                     row.entry.get(
                         "path",
                         "",
-                    )
+                    ),
+                    row.entry.get("host"),
+                    row.entry.get("share"),
                 )
             )
 
@@ -2355,7 +2557,9 @@ class MounThorApp(
                     row.entry.get(
                         "path",
                         "",
-                    )
+                    ),
+                    row.entry.get("host"),
+                    row.entry.get("share"),
                 )
             )
         ]
@@ -2397,7 +2601,9 @@ class MounThorApp(
                     row.entry.get(
                         "path",
                         "",
-                    )
+                    ),
+                    row.entry.get("host"),
+                    row.entry.get("share"),
                 )
             )
 
@@ -2604,7 +2810,9 @@ class MounThorApp(
                     row.entry.get(
                         "path",
                         "",
-                    )
+                    ),
+                    row.entry.get("host"),
+                    row.entry.get("share"),
                 )
             )
 
@@ -3071,7 +3279,9 @@ class MounThorApp(
                 row.entry.get(
                     "path",
                     "",
-                )
+                ),
+                row.entry.get("host"),
+                row.entry.get("share"),
             )
         ]
 
@@ -3120,7 +3330,9 @@ class MounThorApp(
                 row.entry.get(
                     "path",
                     "",
-                )
+                ),
+                row.entry.get("host"),
+                row.entry.get("share"),
             )
         ]
 
@@ -3387,7 +3599,9 @@ class MounThorApp(
                 row.entry.get(
                     "path",
                     "",
-                )
+                ),
+                row.entry.get("host"),
+                row.entry.get("share"),
             )
         ]
 
@@ -3877,7 +4091,9 @@ class MounThorApp(
                 row.entry.get(
                     "path",
                     "",
-                )
+                ),
+                row.entry.get("host"),
+                row.entry.get("share"),
             )
         ]
 
@@ -3987,7 +4203,9 @@ class MounThorApp(
                         row.entry.get(
                             "path",
                             "",
-                        )
+                        ),
+                        row.entry.get("host"),
+                        row.entry.get("share"),
                     )
                 )
 
@@ -4663,7 +4881,9 @@ class MounThorApp(
             entry.get(
                 "path",
                 "",
-            )
+            ),
+            entry.get("host"),
+            entry.get("share"),
         )
 
         dialog = Adw.Dialog()
@@ -4773,7 +4993,9 @@ class MounThorApp(
                 entry.get(
                     "path",
                     "",
-                )
+                ),
+                entry.get("host"),
+                entry.get("share"),
             ):
 
                 ok, message = do_unmount(
@@ -4877,7 +5099,9 @@ class MounThorApp(
                 row.entry.get(
                     "path",
                     "",
-                )
+                ),
+                row.entry.get("host"),
+                row.entry.get("share"),
             )
         )
 
@@ -4945,7 +5169,11 @@ class MounThorApp(
 
         about.set_release_notes(
             "<p>New in this version:</p>"
-            "<p>Passwords are now stored securely using the Freedesktop Secret Service API for credential storage.</p>"
+            "<ul>"
+                "<li>Fixed an issue where all shares using the same mount path were shown as mounted when only one of them was mounted.</li>"
+                "<li>Fixed an issue where an unmount operation on one share would incorrectly unmount all shares using the same mount path.</li>"
+            "</ul>"
+            "<p>New in 0.8.0 release:</p>"
             "<ul>"
                 "<li>Added secure password storage using the Freedesktop Secret Service API.</li>"
                 "<li>Save credentials only after a successful mount.</li>"
