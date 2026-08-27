@@ -721,6 +721,17 @@ def _get_topmost_mount_source(
     return topmost[0]["source"]
 
 
+def get_mount_source(
+    path: str,
+) -> str | None:
+
+    """Return the SMB source (e.g. '//host/share') mounted at *path*, or None."""
+
+    return _get_topmost_mount_source(
+        path
+    )
+
+
 def _auth(
     command: list[str],
 ) -> list[str]:
@@ -2611,6 +2622,29 @@ class MounThorApp(
 
         if mount:
 
+            path = row.entry.get("path", "")
+            host = row.entry.get("host", "")
+            share = row.entry.get("share", "")
+
+            # Check for conflict: path is mounted by a *different* share
+            if (
+                is_mounted(path)
+                and not is_mounted(
+                    path, host, share
+                )
+            ):
+
+                existing_source = get_mount_source(
+                    path
+                )
+
+                self._show_replace_dialog(
+                    row,
+                    existing_source or "",
+                )
+
+                return
+
             self._ask_password(
                 row
             )
@@ -2620,6 +2654,236 @@ class MounThorApp(
             self._unmount(
                 row
             )
+
+    def _show_replace_dialog(
+        self,
+        row: MountRow,
+        existing_source: str,
+        on_after_close=None,
+    ):
+
+        host = row.entry.get("host", "")
+        share = row.entry.get("share", "")
+        path = row.entry.get("path", "")
+
+        dialog = Adw.AlertDialog()
+        dialog.set_heading(
+            "Mount path already in use"
+        )
+        dialog.set_body(
+            f"The path ``{path}``\n"
+            "is currently mounted as\n"
+            f"{existing_source}.\n\n"
+            "Replace it with:\n"
+            f"//{host}/{share}?"
+        )
+
+        dialog.add_response(
+            "keep", "Keep Original"
+        )
+        dialog.set_close_response(
+            "keep"
+        )
+
+        dialog.add_response(
+            "replace", "Replace"
+        )
+        dialog.set_default_response(
+            "replace"
+        )
+        dialog.set_response_appearance(
+            "replace", Adw.ResponseAppearance.DESTRUCTIVE
+        )
+
+        def on_response(
+            _alert,
+            response,
+        ):
+
+            if response == "replace":
+
+                self._replace_mount(
+                    row,
+                    on_after_close=on_after_close,
+                )
+
+            else:
+
+                # "keep" → do nothing, existing mount stays
+                row.set_mounted(
+                    False
+                )
+                if on_after_close:
+
+                    GLib.idle_add(
+                        on_after_close
+                    )
+
+        dialog.connect(
+            "response",
+            on_response,
+        )
+
+        dialog.present(
+            self.win
+        )
+
+    def _replace_mount(
+        self,
+        row: MountRow,
+        on_after_close=None,
+    ):
+
+        path = row.entry.get("path", "")
+        host = row.entry.get("host", "")
+        share = row.entry.get("share", "")
+
+        # Get the existing mount source to unmount it first
+        existing_source = get_mount_source(
+            path
+        )
+
+        if not existing_source:
+
+            self.toast(
+                "Could not identify the existing mount.",
+                error=True,
+            )
+
+            return
+
+        # Parse host/share from //host/share format
+        try:
+
+            # Remove leading '//' and split
+            without_scheme = (
+                existing_source[2:]
+                if existing_source.startswith(
+                    "//"
+                )
+                else existing_source
+            )
+
+            parts = without_scheme.split("/", 1)
+            old_host = parts[0] if len(parts) > 0 else ""
+            old_share = (
+                parts[1].lstrip("/")
+                if len(parts) > 1
+                else ""
+            )
+
+        except Exception:
+
+            self.toast(
+                "Could not parse existing mount source.",
+                error=True,
+            )
+
+            return
+
+        # Build temporary entry for unmounting
+        temp_entry = {
+            "path": path,
+            "host": old_host,
+            "share": old_share,
+        }
+
+        def worker():
+
+            ok, message = do_unmount(
+                temp_entry
+            )
+
+            GLib.idle_add(
+                self._replace_mount_done,
+                row,
+                ok,
+                message,
+                on_after_close,
+            )
+
+        threading.Thread(
+            target=worker,
+            name="smb-replace",
+            daemon=True,
+        ).start()
+
+    def _replace_mount_done(
+        self,
+        row: MountRow,
+        ok: bool,
+        message: str,
+        on_after_close=None,
+    ):
+
+        if not ok:
+
+            LOGGER.error(
+                "Unmount failed during replace for %s/%s: %s",
+                row.entry.get("host"),
+                row.entry.get("share"),
+                message,
+            )
+
+            self.toast(
+                f"Failed to unmount existing share: {message}",
+                error=True,
+            )
+
+            if on_after_close:
+
+                GLib.idle_add(
+                    on_after_close
+                )
+
+            return
+
+        # Unmount succeeded — now proceed with normal mount flow
+        LOGGER.info(
+            "Unmounted existing share, proceeding to mount //%s/%s",
+            row.entry.get("host"),
+            row.entry.get("share"),
+        )
+
+        # Refresh toggles of other rows sharing this mount path so the
+        # previously-mounted share no longer shows as connected.
+        target = os.path.realpath(
+            os.path.expanduser(
+                row.entry.get("path", "")
+            )
+        )
+
+        for other in self.rows.values():
+
+            if other is row:
+
+                continue
+
+            o_path = other.entry.get("path", "")
+
+            if not o_path:
+
+                continue
+
+            if os.path.realpath(
+                os.path.expanduser(
+                    o_path
+                )
+            ) != target:
+
+                continue
+
+            other.set_mounted(
+                is_mounted(
+                    o_path,
+                    other.entry.get("host"),
+                    other.entry.get("share"),
+                )
+            )
+
+        self._ask_password(
+            row
+        )
 
     def _mount(
         self,
@@ -3272,20 +3536,33 @@ class MounThorApp(
 
             return
 
-        rows = [
-            row
-            for row in selected_rows
-            if not is_mounted(
-                row.entry.get(
-                    "path",
-                    "",
-                ),
-                row.entry.get("host"),
-                row.entry.get("share"),
-            )
-        ]
+        # Separate rows into clean and conflict groups
+        clean_rows = []
+        conflict_rows = []
 
-        if not rows:
+        for row in selected_rows:
+
+            path = row.entry.get("path", "")
+            host = row.entry.get("host", "")
+            share = row.entry.get("share", "")
+
+            if is_mounted(
+                path, host, share
+            ):
+
+                # Already mounted with same share — skip entirely
+                continue
+
+            elif is_mounted(path):
+
+                # Conflict: path mounted by different share
+                conflict_rows.append(row)
+
+            else:
+
+                clean_rows.append(row)
+
+        if not clean_rows and not conflict_rows:
 
             self.toast(
                 "All selected SMB shares are already connected."
@@ -3293,16 +3570,158 @@ class MounThorApp(
 
             return
 
-        self._batch_active = True
+        # Block the operation when multiple shares target the same path
+        duplicate_groups = self._find_duplicate_paths(
+            clean_rows + conflict_rows
+        )
+
+        if duplicate_groups:
+
+            # The user's toggle click already flipped the switch on —
+            # reset every selected row to its real mount state.
+            for row in selected_rows:
+
+                row.set_mounted(
+                    is_mounted(
+                        row.entry.get("path", ""),
+                        row.entry.get("host"),
+                        row.entry.get("share"),
+                    )
+                )
+
+            self._show_duplicate_path_dialog(
+                duplicate_groups
+            )
+
+            return
+
+        # Process clean rows through normal batch flow
+        if clean_rows:
+
+            self._batch_active = True
+
+            for row in clean_rows:
+
+                row.set_busy(
+                    True
+                )
+
+            self._collect_selected_batch_password(
+                clean_rows
+            )
+
+        # Show dialogs for conflict rows (one at a time)
+        if conflict_rows:
+
+            self._show_conflict_dialogs(
+                conflict_rows,
+                0,
+            )
+
+    def _show_conflict_dialogs(
+        self,
+        conflict_rows: list[MountRow],
+        index: int,
+    ):
+
+        if index >= len(conflict_rows):
+
+            return
+
+        row = conflict_rows[index]
+        path = row.entry.get("path", "")
+        existing_source = get_mount_source(path) or ""
+
+        def on_next():
+
+            GLib.idle_add(
+                self._show_conflict_dialogs,
+                conflict_rows,
+                index + 1,
+            )
+
+        self._show_replace_dialog(
+            row,
+            existing_source,
+            on_after_close=on_next,
+        )
+
+    def _find_duplicate_paths(
+        self,
+        rows: list[MountRow],
+    ):
+
+        groups = {}
 
         for row in rows:
 
-            row.set_busy(
-                True
+            path = row.entry.get("path", "")
+
+            if not path:
+
+                continue
+
+            key = os.path.realpath(
+                os.path.expanduser(
+                    path
+                )
             )
 
-        self._collect_selected_batch_password(
-            rows
+            groups.setdefault(
+                key,
+                [],
+            ).append(
+                row
+            )
+
+        return {
+            key: group
+            for key, group in groups.items()
+            if len(group) > 1
+        }
+
+    def _show_duplicate_path_dialog(
+        self,
+        groups: dict,
+    ):
+
+        lines = [
+            "Multiple SMB shares"
+        ]
+
+        for key in sorted(groups):
+
+            names = " & ".join(
+                f"{row.entry.get('name', 'Unnamed')}"
+                for row in groups[key]
+            )
+
+            lines.append(f"{names}\n")
+            lines.append(f"are trying to connect to the same mount path:")
+            lines.append(f"``{key}``")
+
+        lines.append("")
+        lines.append(
+            "This operation cannot be performed."
+        )
+
+        dialog = Adw.AlertDialog()
+        dialog.set_heading(
+            "Duplicate mount paths"
+        )
+        dialog.set_body(
+            "\n".join(lines)
+        )
+        dialog.add_response(
+            "ok",
+            "OK",
+        )
+        dialog.set_close_response(
+            "ok"
+        )
+
+        dialog.present(
+            self.win
         )
 
     def disconnect_selected(
@@ -3609,6 +4028,19 @@ class MounThorApp(
 
             self.toast(
                 "All SMB shares are already connected."
+            )
+
+            return
+
+        # Block the operation when multiple shares target the same path
+        duplicate_groups = self._find_duplicate_paths(
+            rows
+        )
+
+        if duplicate_groups:
+
+            self._show_duplicate_path_dialog(
+                duplicate_groups
             )
 
             return
@@ -5172,6 +5604,7 @@ class MounThorApp(
             "<ul>"
                 "<li>Fixed an issue where all shares using the same mount path were shown as mounted when only one of them was mounted.</li>"
                 "<li>Fixed an issue where an unmount operation on one share would incorrectly unmount all shares using the same mount path.</li>"
+                "<li>Connect Selected and Connect All now refuse to run when multiple shares use the same mount path, showing a dialog listing the conflicting shares instead.</li>"
             "</ul>"
             "<p>New in 0.8.0 release:</p>"
             "<ul>"
