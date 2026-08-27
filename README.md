@@ -34,6 +34,7 @@ The interface follows the system's GTK light and dark themes and respects the co
 - Configure custom CIFS mount options such as vers=3.1.1.
 - Configure shares to automount when MounThor starts.
 - Edit, duplicate, and remove saved shares.
+- Detect mount path conflicts and optionally replace an existing mount with another share.
 - Automatically clean up temporary CIFS credential files left after an unexpected application exit.
 - GTK4/libadwaita interface supporting system light and dark themes and the configured accent color.
 - Responsive status feedback with spinners, icons, toasts, and logging.
