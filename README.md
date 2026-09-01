@@ -2,10 +2,11 @@
   <h1>MounThor</h1>
 
   <p align="center">
-  CIFS/SMB mount manager for Linux.
+  
+  ### CIFS/SMB mount manager for Linux.
 
-[![License](https://img.shields.io/github/license/mizgo/MounThor?style=for-the-badge&logo=github&logoColor=white&color=7C3AED)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/mizgo/MounThor?style=for-the-badge&logo=linux&logoColor=white&color=7C3AED)](https://github.com/mizgo/MounThor/releases)
+[![License](https://img.shields.io/github/license/mizgo/MounThor?style=for-the-badge&logo=github&logoColor=white&color=ffffff)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/mizgo/MounThor?style=for-the-badge&logo=linux&logoColor=white&color=ffffff)](https://github.com/mizgo/MounThor/releases)
   </p>
 </div>
 
