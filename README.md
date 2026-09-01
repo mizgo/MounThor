@@ -7,6 +7,7 @@
 
 [![License](https://img.shields.io/github/license/mizgo/MounThor?style=for-the-badge&logo=github&logoColor=white&color=ffffff)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/mizgo/MounThor?style=for-the-badge&logo=linux&logoColor=white&color=ffffff)](https://github.com/mizgo/MounThor/releases)
+[![Downloads](https://img.shields.io/github/downloads/mizgo/MounThor/latest/total?style=for-the-badge&logo=github&label=Downloads&logoColor=white&color=ffffff)](https://github.com/mizgo/MounThor/releases)
   </p>
 </div>
 
