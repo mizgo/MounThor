@@ -1,0 +1,672 @@
+#!/usr/bin/env python3
+
+"""
+MounThor privileged mount helper
+================================
+
+Small stdlib-only helper that performs a single CIFS mount or unmount.
+
+It is intended to be executed as root via pkexec, authorized by a
+per-user .pkrule so that no interactive password prompt appears after
+the one-time authorization:
+
+    pkexec /home/<user>/.local/bin/mounthor-mount-helper
+
+Input (stdin, JSON):
+    {
+        "op": "mount" | "unmount",
+        "entry": {
+            "host": "...",
+            "share": "...",
+            "path": "...",
+            "username": "...",
+            "options": "..."
+        },
+        "password": "...",   # mount only
+        "uid": 1000,         # requesting user
+        "gid": 1000          # requesting user
+    }
+
+Output (stdout, JSON):
+    {"ok": true, "message": "mounted"}
+
+Exit code is 0 on success and 1 on failure. The JSON result is always
+written to stdout.
+
+Only the Python standard library is used so that this script does not
+depend on the application's full dependency set (gi, secretstorage).
+"""
+
+import json
+import os
+import pwd
+import secrets
+import subprocess
+import sys
+
+
+def fail(
+    message: str,
+) -> None:
+
+    print(
+        json.dumps(
+            {
+                "ok": False,
+                "message": message,
+            }
+        )
+    )
+
+    sys.exit(
+        1
+    )
+
+
+def succeed(
+    message: str,
+) -> None:
+
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "message": message,
+            }
+        )
+    )
+
+    sys.exit(
+        0
+    )
+
+
+def clean_cifs_options(
+    value: str | None,
+) -> list[str]:
+
+    value = (
+        value
+        or ""
+    ).strip()
+
+    if not value:
+
+        return []
+
+    if value.startswith(
+        "-o"
+    ):
+
+        value = value[2:].lstrip()
+
+        if value.startswith(
+            "="
+        ):
+
+            value = value[1:].lstrip()
+
+    result = []
+
+    for item in value.split(
+        ","
+    ):
+
+        item = item.strip()
+
+        if item:
+
+            result.append(
+                item
+            )
+
+    return result
+
+
+def credential_directory(
+    uid: int,
+) -> str:
+
+    runtime_dir = f"/run/user/{uid}"
+
+    if os.path.isdir(
+        runtime_dir
+    ):
+
+        return runtime_dir
+
+    return "/tmp"
+
+
+def expand_mountpoint(
+    path: str,
+    pw_user,
+) -> str:
+
+    if path.startswith(
+        "~"
+    ):
+
+        return os.path.join(
+            pw_user.pw_dir,
+            path[1:].lstrip("/"),
+        )
+
+    return path
+
+
+def get_topmost_mount_source(
+    path: str,
+) -> str | None:
+
+    """Return the SMB source (e.g. '//host/share') mounted at *path*, or None."""
+
+    def unescape(value: str) -> str:
+
+        return value.replace(
+            "\\040", " "
+        ).replace(
+            "\\011", "\t"
+        ).replace(
+            "\\134", "\\"
+        )
+
+    if not path:
+
+        return None
+
+    target = os.path.realpath(
+        path
+    )
+
+    mounts = []
+
+    try:
+
+        with open(
+            "/proc/self/mountinfo",
+            "r",
+            encoding="utf-8",
+        ) as mountinfo:
+
+            for line in mountinfo:
+
+                fields = line.split(
+                    " - ",
+                    1,
+                )
+
+                if len(fields) != 2:
+
+                    continue
+
+                pre_separator = fields[0].split()
+                post_separator = fields[1].split()
+
+                if len(pre_separator) < 5:
+
+                    continue
+
+                if len(post_separator) < 2:
+
+                    continue
+
+                mount_id = int(
+                    pre_separator[0]
+                )
+
+                parent_id = int(
+                    pre_separator[1]
+                )
+
+                mounted_path = unescape(
+                    pre_separator[4]
+                )
+
+                mounted_path = os.path.realpath(
+                    mounted_path
+                )
+
+                if mounted_path != target:
+
+                    continue
+
+                filesystem_type = post_separator[0]
+                source = unescape(
+                    post_separator[1]
+                )
+
+                mounts.append(
+                    {
+                        "id": mount_id,
+                        "parent_id": parent_id,
+                        "filesystem_type": filesystem_type,
+                        "source": source,
+                    }
+                )
+
+    except (
+        OSError,
+        ValueError,
+    ):
+
+        return None
+
+    if not mounts:
+
+        return None
+
+    mount_ids = {
+        mount["id"]
+        for mount in mounts
+    }
+
+    child_mount_ids = {
+        mount["parent_id"]
+        for mount in mounts
+        if mount["parent_id"] in mount_ids
+    }
+
+    topmost = [
+        mount
+        for mount in mounts
+        if mount["id"] not in child_mount_ids
+    ]
+
+    if len(topmost) != 1:
+
+        return None
+
+    return topmost[0]["source"]
+
+
+def do_mount(
+    entry: dict,
+    password: str,
+    pw_user,
+    uid: int,
+    gid: int,
+):
+
+    host = (
+        entry.get("host")
+        or ""
+    ).strip()
+
+    share = (
+        entry.get("share")
+        or ""
+    ).strip().lstrip("/")
+
+    path = (
+        entry.get("path")
+        or ""
+    ).strip()
+
+    if not host:
+
+        return False, "host is required"
+
+    if not share:
+
+        return False, "share name is required"
+
+    if not path:
+
+        return False, "mount path is required"
+
+    mountpoint = expand_mountpoint(
+        path,
+        pw_user,
+    )
+
+    try:
+
+        os.makedirs(
+            mountpoint,
+            exist_ok=True,
+        )
+
+        # The helper runs as root; make sure the mount point belongs
+        # to the requesting user.
+        os.chown(
+            mountpoint,
+            uid,
+            gid,
+        )
+
+    except OSError as exc:
+
+        return (
+            False,
+            f"cannot create mount point: {exc}",
+        )
+
+    cred_dir = credential_directory(
+        uid
+    )
+
+    cred_file = os.path.join(
+        cred_dir,
+        f"cifs-creds-{secrets.token_hex(16)}",
+    )
+
+    username = (
+        entry.get("username")
+        or pw_user.pw_name
+    ).strip()
+
+    try:
+
+        fd = os.open(
+            cred_file,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL,
+            0o600,
+        )
+
+        with os.fdopen(
+            fd,
+            "w",
+            encoding="utf-8",
+        ) as credentials:
+
+            credentials.write(
+                f"username={username}\n"
+            )
+
+            credentials.write(
+                f"password={password}\n"
+            )
+
+        options = [
+            f"credentials={cred_file}",
+            f"uid={uid}",
+            f"gid={gid}",
+            "file_mode=0644",
+            "dir_mode=0755",
+        ]
+
+        options.extend(
+            clean_cifs_options(
+                entry.get("options")
+            )
+        )
+
+        command = [
+            "/usr/bin/mount",
+            "-t",
+            "cifs",
+            f"//{host}/{share}",
+            mountpoint,
+            "-o",
+            ",".join(
+                options
+            ),
+        ]
+
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+
+        if result.returncode != 0:
+
+            message = (
+                result.stderr
+                or result.stdout
+                or "mount failed"
+            ).strip()
+
+            return False, message
+
+        return True, "mounted"
+
+    except FileExistsError:
+
+        return (
+            False,
+            "temporary credentials file already exists",
+        )
+
+    except PermissionError as exc:
+
+        return (
+            False,
+            f"cannot create credentials file: {exc}",
+        )
+
+    except subprocess.TimeoutExpired:
+
+        return (
+            False,
+            "mount timed out",
+        )
+
+    except OSError as exc:
+
+        return (
+            False,
+            f"mount error: {exc}",
+        )
+
+    finally:
+
+        try:
+
+            os.unlink(
+                cred_file
+            )
+
+        except OSError:
+
+            pass
+
+
+def do_unmount(
+    entry: dict,
+    pw_user,
+):
+
+    path = (
+        entry.get("path")
+        or ""
+    ).strip()
+
+    if not path:
+
+        return False, "mount path is empty"
+
+    mountpoint = expand_mountpoint(
+        path,
+        pw_user,
+    )
+
+    expected_source = (
+        f"//{(entry.get('host') or '').strip()}/"
+        f"{(entry.get('share') or '').strip().lstrip('/')}"
+    )
+
+    topmost_source = get_topmost_mount_source(
+        mountpoint
+    )
+
+    if (
+        topmost_source is not None
+        and topmost_source.lower()
+        != expected_source.lower()
+    ):
+
+        return (
+            False,
+            (
+                "another mount is covering "
+                "this share's mount point"
+            ),
+        )
+
+    try:
+
+        result = subprocess.run(
+            [
+                "/usr/bin/umount",
+                mountpoint,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode != 0:
+
+            message = (
+                result.stderr
+                or result.stdout
+                or "umount failed"
+            ).strip()
+
+            return False, message
+
+        return True, "unmounted"
+
+    except subprocess.TimeoutExpired:
+
+        return False, "unmount timed out"
+
+    except OSError as exc:
+
+        return (
+            False,
+            f"unmount error: {exc}",
+        )
+
+
+def main() -> None:
+
+    if os.geteuid() != 0:
+
+        fail(
+            "must run as root"
+        )
+
+    try:
+
+        raw = sys.stdin.read()
+
+        request = json.loads(
+            raw
+        )
+
+    except (
+        json.JSONDecodeError,
+        OSError,
+    ) as exc:
+
+        fail(
+            f"invalid request: {exc}"
+        )
+
+    if not isinstance(
+        request,
+        dict,
+    ):
+
+        fail(
+            "invalid request format"
+        )
+
+    op = (
+        request.get("op")
+        or ""
+    ).strip()
+
+    entry = request.get("entry")
+
+    if not isinstance(
+        entry,
+        dict,
+    ):
+
+        fail(
+            "entry is required"
+        )
+
+    try:
+
+        uid = int(
+            request.get("uid", 0)
+        )
+
+        gid = int(
+            request.get("gid", 0)
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+
+        fail(
+            "uid and gid must be integers"
+        )
+
+    try:
+
+        pw_user = pwd.getpwuid(
+            uid
+        )
+
+    except KeyError:
+
+        fail(
+            f"unknown user id {uid}"
+        )
+
+    if op == "mount":
+
+        password = request.get("password")
+
+        if password is None:
+
+            fail(
+                "password is required for mount"
+            )
+
+        ok, message = do_mount(
+            entry,
+            str(password),
+            pw_user,
+            uid,
+            gid,
+        )
+
+    elif op == "unmount":
+
+        ok, message = do_unmount(
+            entry,
+            pw_user,
+        )
+
+    else:
+
+        fail(
+            f"unknown operation: {op!r}"
+        )
+
+    if ok:
+
+        succeed(
+            message
+        )
+
+    fail(
+        message
+    )
+
+
+if __name__ == "__main__":
+
+    main()

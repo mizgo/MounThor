@@ -17,10 +17,12 @@ APPLICATIONS_DIR="${XDG_DATA_HOME}/applications"
 
 APP_SOURCE="${PROJECT_DIR}/mounthor.py"
 LAUNCHER_SOURCE="${PROJECT_DIR}/scripts/mounthor"
+HELPER_SOURCE="${PROJECT_DIR}/scripts/mounthor-mount-helper"
 DESKTOP_SOURCE="${PROJECT_DIR}/data/io.github.mizgo.MounThor.desktop.in"
 
 APP_TARGET="${APP_DIR}/mounthor.py"
 BIN_TARGET="${BIN_DIR}/mounthor"
+HELPER_TARGET="${APP_DIR}/scripts/mounthor-mount-helper"
 DESKTOP_TARGET="${APPLICATIONS_DIR}/io.github.mizgo.MounThor.desktop"
 
 # ============================================================================
@@ -38,6 +40,14 @@ fi
 if [[ ! -f "${LAUNCHER_SOURCE}" ]]; then
 
     echo "Error: launcher not found."
+
+    exit 1
+
+fi
+
+if [[ ! -f "${HELPER_SOURCE}" ]]; then
+
+    echo "Error: mount helper not found."
 
     exit 1
 
@@ -66,7 +76,7 @@ fi
 # ============================================================================
 
 mkdir -p \
-    "${APP_DIR}" \
+    "${APP_DIR}/scripts" \
     "${BIN_DIR}" \
     "${APPLICATIONS_DIR}"
 
@@ -87,6 +97,15 @@ install \
     -m 0755 \
     "${LAUNCHER_SOURCE}" \
     "${BIN_TARGET}"
+
+# ============================================================================
+# Mount helper
+# ============================================================================
+
+install \
+    -m 0755 \
+    "${HELPER_SOURCE}" \
+    "${HELPER_TARGET}"
 
 # ============================================================================
 # Desktop entry
@@ -147,6 +166,9 @@ echo "  ${APP_TARGET}"
 echo
 echo "Launcher:"
 echo "  ${BIN_TARGET}"
+echo
+echo "Mount helper:"
+echo "  ${HELPER_TARGET}"
 echo
 echo "Desktop entry:"
 echo "  ${DESKTOP_TARGET}"
