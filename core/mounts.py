@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .constants import HELPER_BIN, USE_SUDO
+from ..constants import HELPER_BIN, USE_SUDO
 
 LOGGER = logging.getLogger("mounthor")
 

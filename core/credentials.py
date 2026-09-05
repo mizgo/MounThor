@@ -7,7 +7,7 @@ import os
 
 import secretstorage
 
-from .constants import CREDENTIAL_SERVICE
+from ..constants import CREDENTIAL_SERVICE
 
 LOGGER = logging.getLogger("mounthor")
 

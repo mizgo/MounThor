@@ -13,15 +13,15 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 from .constants import APP_ID, APP_NAME, APP_RELEASE_DATE, APP_VERSION, APP_AUTHOR, POLKIT_RULE_FILE
 from .config import configure_logging, load_config, save_config, get_effective_username
-from .mounts import (
+from .core.mounts import (
     cleanup_stale_credentials,
     do_mount,
     do_unmount,
     get_mount_source,
     is_mounted,
 )
-from .credentials import secure_storage_available, secure_load_password, secure_store_password, secure_delete_password
-from .gtk_helpers import (
+from .core.credentials import secure_storage_available, secure_load_password, secure_store_password, secure_delete_password
+from .ui.gtk_helpers import (
     get_text,
     install_enter_action,
     make_action_bar,
@@ -30,7 +30,7 @@ from .gtk_helpers import (
     make_mount_listbox,
     install_mount_list_css,
 )
-from .rows import MountRow
+from .ui.rows import MountRow
 
 LOGGER = logging.getLogger("mounthor")
 
@@ -1023,7 +1023,7 @@ class MounThorApp(Adw.Application):
         self.toast(f"{operation_name}: connecting {len(rows)} share(s)…")
 
         def worker():
-            from .mounts import _run_privileged_batch  # noqa: F811 - local import to avoid circular
+            from .core.mounts import _run_privileged_batch  # noqa: F811 - local import to avoid circular
             results = _run_privileged_batch("batch-mount", items)
             GLib.idle_add(self._connect_all_done, rows, results, operation_name)
 
@@ -1086,7 +1086,7 @@ class MounThorApp(Adw.Application):
         ]
 
         def worker():
-            from .mounts import _run_privileged_batch  # noqa: F811 - local import to avoid circular
+            from .core.mounts import _run_privileged_batch  # noqa: F811 - local import to avoid circular
             results = _run_privileged_batch("batch-unmount", items)
             GLib.idle_add(self._disconnect_all_done, rows, results, operation_name)
 
@@ -1121,7 +1121,7 @@ class MounThorApp(Adw.Application):
         ]
 
         def worker():
-            from .mounts import _run_privileged_batch  # noqa: F811 - local import to avoid circular
+            from .core.mounts import _run_privileged_batch  # noqa: F811 - local import to avoid circular
             results = _run_privileged_batch("batch-unmount", items)
             GLib.idle_add(self._disconnect_all_done, rows, results)
 
@@ -1321,7 +1321,7 @@ class MounThorApp(Adw.Application):
             if not name:
                 name = f"{host}/{share}"
 
-            from .mounts import _clean_cifs_options  # noqa: F811 - local import
+            from .core.mounts import _clean_cifs_options  # noqa: F811 - local import
             normalized_options = ",".join(_clean_cifs_options(options))
 
             data = {
@@ -1704,7 +1704,7 @@ class MounThorApp(Adw.Application):
 
 def run_autostart() -> int:
     """Mount all entries with system_automount enabled. No GUI."""
-    from .mounts import mount_entry_privileged  # noqa: F811 - local import to avoid circular
+    from .core.mounts import mount_entry_privileged  # noqa: F811 - local import to avoid circular
 
     try:
         cfg = load_config()
@@ -1755,7 +1755,7 @@ def run_autostart() -> int:
 # ============================================================================
 
 def main():
-    from .mounts import _privileged_batch_main  # noqa: F811 - local import to avoid circular
+    from .core.mounts import _privileged_batch_main  # noqa: F811 - local import to avoid circular
 
     if "--batch-mount" in sys.argv:
         return _privileged_batch_main("batch-mount")

@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from .constants import (
+from ..constants import (
     AUTOMOUNT_SERVICE_FILE,
     AUTOMOUNT_SERVICE_NAME,
     HELPER_BIN,

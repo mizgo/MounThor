@@ -4,7 +4,7 @@
 
 from gi.repository import Adw, Gdk, Gtk
 
-from .constants import (
+from ..constants import (
     LIST_PADDING_BOTTOM,
     LIST_PADDING_LEFT,
     LIST_PADDING_RIGHT,
