@@ -1211,6 +1211,13 @@ def mount_entry_privileged(
         "gid": os.getgid(),
     }
 
+    LOGGER.info(
+        f"Invoking mount helper for "
+        f"'{entry.get('name')}' "
+        f"(//{entry.get('host')}/{entry.get('share')} "
+        f"-> {entry.get('path')})"
+    )
+
     try:
 
         result = subprocess.run(
@@ -1225,6 +1232,11 @@ def mount_entry_privileged(
 
     except (subprocess.SubprocessError, OSError) as exc:
 
+        LOGGER.error(
+            f"Mount helper invocation failed for "
+            f"'{entry.get('name')}': {exc}"
+        )
+
         return False, f"Helper invocation failed: {exc}"
 
     try:
@@ -1238,6 +1250,11 @@ def mount_entry_privileged(
         message = (
             result.stderr.strip()
             or f"Helper exited with code {result.returncode}."
+        )
+
+        LOGGER.error(
+            f"Mount helper returned invalid output for "
+            f"'{entry.get('name')}': {message}"
         )
 
         return False, message
@@ -5757,6 +5774,11 @@ class MounThorApp(
                 ):
 
                     if response != "setup":
+
+                        LOGGER.info(
+                            f"User cancelled system automount setup "
+                            f"for '{data['name']}'."
+                        )
 
                         _revert_system_automount()
 
