@@ -5691,12 +5691,44 @@ class MounThorApp(
 
             except OSError as exc:
 
+                LOGGER.error(
+                    f"Could not save configuration for "
+                    f"share '{name}': {exc}"
+                )
+
                 self.toast(
                     f"Could not save configuration: {exc}",
                     error=True,
                 )
 
                 return
+
+            if (
+                row is not None
+                and not is_duplicate
+            ):
+
+                LOGGER.info(
+                    f"Updated share "
+                    f"'{name}' "
+                    f"(//{host}/{share} -> {path})."
+                )
+
+            elif is_duplicate:
+
+                LOGGER.info(
+                    f"Duplicated share as "
+                    f"'{name}' "
+                    f"(//{host}/{share} -> {path})."
+                )
+
+            else:
+
+                LOGGER.info(
+                    f"Added share "
+                    f"'{name}' "
+                    f"(//{host}/{share} -> {path})."
+                )
 
             if (
                 credential_identity_changed
@@ -6021,6 +6053,13 @@ class MounThorApp(
             row.entry
         )
 
+        LOGGER.info(
+            f"Removing share "
+            f"'{entry.get('name')}' "
+            f"(//{entry.get('host')}/"
+            f"{entry.get('share')} -> {entry.get('path')})."
+        )
+
         row.set_busy(
             True
         )
@@ -6127,6 +6166,11 @@ class MounThorApp(
         row,
         message,
     ):
+
+        LOGGER.error(
+            f"Remove failed for "
+            f"'{row.entry.get('name')}': {message}"
+        )
 
         row.set_busy(
             False
