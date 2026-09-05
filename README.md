@@ -5,9 +5,9 @@
   
   ### CIFS/SMB mount manager for Linux.
 
-[![License](https://img.shields.io/github/license/mizgo/MounThor?style=for-the-badge&logo=github&logoColor=white&color=ffffff)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/mizgo/MounThor?style=for-the-badge&logo=linux&logoColor=white&color=ffffff)](https://github.com/mizgo/MounThor/releases)
-[![Downloads](https://img.shields.io/github/downloads/mizgo/MounThor/latest/total?style=for-the-badge&logo=github&label=Downloads&logoColor=white&color=ffffff)](https://github.com/mizgo/MounThor/releases)
+[![License](https://img.shields.io/github/license/mizgo/MounThor?style=for-the-badge&logo=github&logoColor=white&color=fafafb)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/mizgo/MounThor?style=for-the-badge&logo=linux&logoColor=white&color=fafafb)](https://github.com/mizgo/MounThor/releases)
+[![Downloads](https://img.shields.io/github/downloads/mizgo/MounThor/latest/total?style=for-the-badge&logo=github&label=Downloads&logoColor=white&color=fafafb)](https://github.com/mizgo/MounThor/releases)
   </p>
 </div>
 
@@ -27,8 +27,10 @@
 
 **A simple Linux desktop application for fast and convenient SMB network share mounting.**
 
-Save frequently used shares along with their mount settings and connect them with just a few clicks. For credentials, you can either save them in the application's configuration file or enter the password each time a share is mounted. You can also use your current Linux account name as the SMB username without storing it in the configuration.
+Save frequently used shares along with their mount settings and connect them with just a few clicks. For credentials, you can either save the password in your system keyring (Freedesktop Secret Service) or enter it each time a share is mounted. You can also use your current Linux account name as the SMB username without storing it in the configuration.
+
 The app provides batch actions for connecting and disconnecting all shares or selected shares, allowing you to authenticate with your superuser password once and apply the action to multiple shares. Individual shares can also be configured to automatically mount when the application starts.
+
 The interface follows the system's GTK light and dark themes and respects the configured accent color.
 
 **The goal is to provide a simple and elegant GUI built with GTK4 and libadwaita for managing CIFS/SMB mounts without repeatedly entering long mount commands and credentials or writing custom scripts for shares that do not need to be persistent.**
@@ -63,6 +65,23 @@ Versions prior to 0.8.0 store saved passwords in the JSON configuration file. Wh
 - libadwaita
 - cifs-utils
 - polkit (pkexec)
+
+## Run from source
+
+If you do not want to install MounThor, you can run it directly from the cloned or extracted repository:
+
+```bash
+python3 mounthor.py
+```
+
+## Configuration and logs
+
+MounThor stores its data in the standard XDG locations:
+
+* `~/.config/mounthor/mounts.json` — saved shares and configuration
+* `~/.local/state/mounthor/mounthor.log` — application log
+
+Secret Service (system keyring) is used for stored passwords when available, so they are not kept in the configuration file.
 
 ## Development
 
