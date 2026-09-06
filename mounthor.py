@@ -512,6 +512,61 @@ def _get_effective_username(
     )
 
 
+def _load_share_password(
+    entry: dict,
+) -> str | None:
+
+    """Return the password for a share entry, if any.
+
+    Checks Secret Service first (identity keyed on host/share/username),
+    then falls back to the plaintext config field. This mirrors the lookup
+    used by the headless login-time automount path.
+    """
+
+    host = entry.get("host") or ""
+    share = entry.get("share") or ""
+    username = _get_effective_username(entry)
+
+    if not (host and share):
+
+        return None
+
+    try:
+
+        password = _secure_load_password(
+            host,
+            share,
+            username,
+        )
+
+    except Exception as exc:
+
+        LOGGER.warning(
+            "Could not query Secret Service for "
+            "//%s/%s: %s",
+            host,
+            share,
+            exc,
+        )
+
+        password = None
+
+    if password:
+
+        return password
+
+    return entry.get("password") or None
+
+
+def _has_stored_password(
+    entry: dict,
+) -> bool:
+
+    """True if a usable password is stored for this share entry."""
+
+    return _load_share_password(entry) is not None
+
+
 # ============================================================================
 # Mount helpers
 # ============================================================================
@@ -3924,6 +3979,314 @@ class MounThorApp(
             self.win
         )
 
+    def _ask_automount_password(
+        self,
+        entry: dict,
+        on_stored,
+        on_cancel=None,
+    ):
+
+        """Ask for the SMB password of a share that will automount at
+        system startup.
+
+        The password is always stored (no "remember" option in this
+        dialog) so that the login-time mount can run fully headless.
+        ``on_stored`` is called once the password has been saved; if
+        the user cancels, ``on_cancel`` is called instead (when given)
+        and the caller decides how to proceed.
+        """
+
+        host = entry.get("host") or ""
+        share = entry.get("share") or ""
+
+        dialog = Adw.Dialog()
+
+        dialog.set_title(
+            "SMB password"
+        )
+
+        dialog.set_content_width(
+            440
+        )
+
+        dialog.set_content_height(
+            320
+        )
+
+        content = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=12,
+            margin_top=18,
+            margin_bottom=18,
+            margin_start=18,
+            margin_end=18,
+        )
+
+        info = Gtk.Label(
+            label=(
+                f"Enter the password for\n"
+                f"//{host}/{share}\n\n"
+                "The password will be remembered so "
+                "this share can be mounted "
+                "automatically at login."
+            ),
+            wrap=True,
+            halign=Gtk.Align.START,
+        )
+
+        content.append(
+            info
+        )
+
+        fields = make_entry_listbox()
+
+        password_row = (
+            Adw.PasswordEntryRow(
+                title="Password"
+            )
+        )
+
+        fields.append(
+            password_row
+        )
+
+        content.append(
+            fields
+        )
+
+        (
+            action_bar,
+            cancel_button,
+            save_button,
+        ) = make_action_bar(
+            "Cancel",
+            "Save password",
+        )
+
+        def on_cancel_pressed(
+            _button,
+        ):
+
+            dialog.close()
+
+            if on_cancel is not None:
+
+                on_cancel()
+
+        def complete_store(
+            password,
+            credential_storage,
+        ):
+
+            username = (
+                _get_effective_username(entry)
+            )
+
+            stored = False
+
+            try:
+
+                if credential_storage == "secret-service":
+
+                    _secure_store_password(
+                        host,
+                        share,
+                        username,
+                        password,
+                    )
+
+                    stored = True
+
+            except Exception as exc:
+
+                LOGGER.error(
+                    "Could not store SMB credential in "
+                    "Secret Service: %s",
+                    exc,
+                )
+
+            if not stored:
+
+                try:
+
+                    cfg_now = load_config()
+
+                    for mount in cfg_now["mounts"]:
+
+                        if (
+                            isinstance(mount, dict)
+                            and mount.get("id")
+                            == entry.get("id")
+                        ):
+
+                            mount["password"] = (
+                                password
+                                if credential_storage
+                                == "plaintext"
+                                else ""
+                            )
+
+                            mount[
+                                "credential_storage"
+                            ] = credential_storage
+
+                            break
+
+                    save_config(
+                        cfg_now
+                    )
+
+                    stored = True
+
+                except Exception as exc:
+
+                    LOGGER.error(
+                        "Could not update share "
+                        "configuration: %s",
+                        exc,
+                    )
+
+            if not stored:
+
+                self.toast(
+                    "Could not save the password.",
+                    error=True,
+                )
+
+                return
+
+            dialog.close()
+
+            on_stored()
+
+        def ask_insecure_storage(
+            password,
+        ):
+
+            alert = Adw.AlertDialog(
+                heading=(
+                    "Secure Credential Storage unavailable"
+                ),
+                body=(
+                    "Secure Credential Storage is not "
+                    "available on this system. The "
+                    "password can be saved unencrypted "
+                    "in MounThor's configuration so the "
+                    "share can still be mounted at "
+                    "login."
+                ),
+            )
+
+            alert.add_response(
+                "cancel",
+                "Cancel",
+            )
+
+            alert.add_response(
+                "plaintext",
+                "Save without encryption",
+            )
+
+            alert.set_default_response(
+                "plaintext"
+            )
+
+            alert.set_close_response(
+                "cancel"
+            )
+
+            alert.set_response_appearance(
+                "plaintext",
+                Adw.ResponseAppearance.DESTRUCTIVE,
+            )
+
+            def on_response(
+                _alert,
+                response,
+            ):
+
+                if response == "plaintext":
+
+                    complete_store(
+                        password,
+                        "plaintext",
+                    )
+
+            alert.connect(
+                "response",
+                on_response,
+            )
+
+            alert.present(
+                self.win
+            )
+
+        def on_save_password(
+            _button,
+        ):
+
+            password = get_text(
+                password_row
+            )
+
+            if not password:
+
+                self.toast(
+                    "Password cannot be empty.",
+                    error=True,
+                )
+
+                return
+
+            try:
+
+                if _secure_storage_available():
+
+                    complete_store(
+                        password,
+                        "secret-service",
+                    )
+
+                else:
+
+                    ask_insecure_storage(
+                        password
+                    )
+
+            except Exception:
+
+                ask_insecure_storage(
+                    password
+                )
+
+        cancel_button.connect(
+            "clicked",
+            on_cancel_pressed,
+        )
+
+        save_button.connect(
+            "clicked",
+            on_save_password,
+        )
+
+        view = make_dialog_view(
+            content,
+            action_bar,
+        )
+
+        dialog.set_child(
+            view
+        )
+
+        install_enter_action(
+            dialog,
+            save_button,
+        )
+
+        dialog.present(
+            self.win
+        )
+
     # =========================================================================
     # Connect / Disconnect Selected
     # =========================================================================
@@ -5526,6 +5889,34 @@ class MounThorApp(
 
             cfg = load_config()
 
+            # Snapshot of the system_automount flags before this save,
+            # keyed by (host, share, path). Used to detect shares whose
+            # flag was switched on by this save so they can be reverted
+            # if the user cancels collecting login passwords.
+            old_autoflags = {}
+
+            for mount in cfg["mounts"]:
+
+                if not isinstance(
+                    mount,
+                    dict,
+                ):
+
+                    continue
+
+                old_autoflags[
+                    (
+                        mount.get("host"),
+                        mount.get("share"),
+                        mount.get("path"),
+                    )
+                ] = bool(
+                    mount.get(
+                        "system_automount",
+                        False,
+                    )
+                )
+
             old_credential_storage = "none"
             old_effective_username = ""
             credential_identity_changed = False
@@ -5752,71 +6143,235 @@ class MounThorApp(
                         exc,
                     )
 
-            if (
-                data["system_automount"]
-                and not POLKIT_RULE_FILE.is_file()
-            ):
+            now_any = any(
+                isinstance(mount, dict)
+                and mount.get("system_automount") is True
+                for mount in cfg["mounts"]
+            )
 
-                def _revert_system_automount():
+            # Shares whose system_automount flag was switched off -> on
+            # by this save. Used to revert if the user cancels collecting
+            # the login passwords below.
+            flipped_keys = [
+                (
+                    mount.get("host"),
+                    mount.get("share"),
+                    mount.get("path"),
+                )
+                for mount in cfg["mounts"]
+                if isinstance(mount, dict)
+                and mount.get(
+                    "system_automount",
+                    False,
+                ) is True
+                and not old_autoflags.get(
+                    (
+                        mount.get("host"),
+                        mount.get("share"),
+                        mount.get("path"),
+                    ),
+                    False,
+                )
+            ]
 
-                    cfg_now = load_config()
+            # Every share set to automount at login that still has no
+            # password stored anywhere. These must be collected now so
+            # the headless login mount can run without user action.
+            missing = [
+                mount for mount in cfg["mounts"]
+                if isinstance(
+                    mount,
+                    dict,
+                )
+                and mount.get(
+                    "system_automount",
+                    False,
+                ) is True
+                and not _has_stored_password(
+                    mount
+                )
+            ]
 
-                    for mount in cfg_now["mounts"]:
+            def _finish_saved():
 
-                        if (
-                            isinstance(
-                                mount,
-                                dict,
-                            )
-                            and mount.get("host")
-                            == data["host"]
-                            and mount.get("share")
-                            == data["share"]
-                            and mount.get("path")
-                            == data["path"]
-                        ):
+                dialog.close()
 
-                            mount[
-                                "system_automount"
-                            ] = False
+                self.rebuild_rows()
 
-                    save_config(
-                        cfg_now
+                self.toast(
+                    "Share saved."
+                )
+
+            def _revert_flipped_and_finish():
+
+                cfg_now = load_config()
+
+                for mount in cfg_now["mounts"]:
+
+                    if not isinstance(
+                        mount,
+                        dict,
+                    ):
+
+                        continue
+
+                    key = (
+                        mount.get("host"),
+                        mount.get("share"),
+                        mount.get("path"),
                     )
 
-                def _on_setup_result(
-                    ok,
-                    message,
+                    if key in flipped_keys:
+
+                        mount[
+                            "system_automount"
+                        ] = False
+
+                save_config(
+                    cfg_now
+                )
+
+                _finish_saved()
+
+            def _proceed():
+
+                if (
+                    data["system_automount"]
+                    and not POLKIT_RULE_FILE.is_file()
                 ):
 
-                    if not ok:
+                    def _revert_system_automount():
 
-                        _revert_system_automount()
+                        cfg_now = load_config()
 
-                        self.rebuild_rows()
+                        for mount in cfg_now[
+                            "mounts"
+                        ]:
 
-                    self.toast(
-                        message,
-                        error=not ok,
-                    )
+                            if (
+                                isinstance(
+                                    mount,
+                                    dict,
+                                )
+                                and mount.get("host")
+                                == data["host"]
+                                and mount.get("share")
+                                == data["share"]
+                                and mount.get("path")
+                                == data["path"]
+                            ):
 
-                def on_setup_choice(
-                    _alert,
-                    response,
-                ):
+                                mount[
+                                    "system_automount"
+                                ] = False
 
-                    if response != "setup":
-
-                        LOGGER.info(
-                            f"User cancelled system automount setup "
-                            f"for '{data['name']}'."
+                        save_config(
+                            cfg_now
                         )
 
-                        _revert_system_automount()
+                    def _on_setup_result(
+                        ok,
+                        message,
+                    ):
 
-                        self.rebuild_rows()
+                        if not ok:
 
-                        return
+                            _revert_system_automount()
+
+                            self.rebuild_rows()
+
+                        self.toast(
+                            message,
+                            error=not ok,
+                        )
+
+                    def on_setup_choice(
+                        _alert,
+                        response,
+                    ):
+
+                        if (
+                            response
+                            != "setup"
+                        ):
+
+                            LOGGER.info(
+                                f"User cancelled system automount setup "
+                                f"for '{data['name']}'."
+                            )
+
+                            _revert_system_automount()
+
+                            self.rebuild_rows()
+
+                            return
+
+                        def _worker():
+
+                            ok, message = (
+                                _ensure_system_automount_ready()
+                            )
+
+                            GLib.idle_add(
+                                _on_setup_result,
+                                ok,
+                                message,
+                            )
+
+                        threading.Thread(
+                            target=_worker,
+                            daemon=True,
+                        ).start()
+
+                    alert = Adw.AlertDialog(
+                        heading=(
+                            "One-time authorization required"
+                        ),
+                        body=(
+                            "Automounting this share at login "
+                            "requires installing a small helper "
+                            "and enabling a systemd service. "
+                            "You will be asked for your password "
+                            "once to authorize this."
+                        ),
+                    )
+
+                    alert.add_response(
+                        "cancel",
+                        "Cancel"
+                    )
+
+                    alert.add_response(
+                        "setup",
+                        "Set up now"
+                    )
+
+                    alert.set_default_response(
+                        "setup"
+                    )
+
+                    alert.connect(
+                        "response",
+                        on_setup_choice,
+                    )
+
+                    alert.present(
+                        self.win
+                    )
+
+                elif data["system_automount"]:
+
+                    def _on_result(
+                        ok,
+                        message,
+                    ):
+
+                        if not ok:
+
+                            self.toast(
+                                message,
+                                error=True,
+                            )
 
                     def _worker():
 
@@ -5825,7 +6380,7 @@ class MounThorApp(
                         )
 
                         GLib.idle_add(
-                            _on_setup_result,
+                            _on_result,
                             ok,
                             message,
                         )
@@ -5835,49 +6390,47 @@ class MounThorApp(
                         daemon=True,
                     ).start()
 
-                alert = Adw.AlertDialog(
-                    heading=(
-                        "One-time authorization required"
-                    ),
-                    body=(
-                        "Automounting this share at login "
-                        "requires installing a small helper "
-                        "and enabling a systemd service. "
-                        "You will be asked for your password "
-                        "once to authorize this."
-                    ),
-                )
+                elif not now_any:
 
-                alert.add_response(
-                    "cancel",
-                    "Cancel"
-                )
+                    def _worker():
 
-                alert.add_response(
-                    "setup",
-                    "Set up now"
-                )
+                        _disable_automount_service()
 
-                alert.set_default_response(
-                    "setup"
-                )
+                    threading.Thread(
+                        target=_worker,
+                        daemon=True,
+                    ).start()
 
-                alert.connect(
-                    "response",
-                    on_setup_choice,
-                )
+                _finish_saved()
 
-                alert.present(
-                    self.win
-                )
+            if (
+                data["system_automount"]
+                and missing
+            ):
 
-            dialog.close()
+                def ask_next(index):
 
-            self.rebuild_rows()
+                    if index >= len(missing):
 
-            self.toast(
-                "Share saved."
-            )
+                        _proceed()
+
+                        return
+
+                    self._ask_automount_password(
+                        missing[index],
+                        lambda: ask_next(
+                            index + 1
+                        ),
+                        on_cancel=lambda: (
+                            _revert_flipped_and_finish()
+                        ),
+                    )
+
+                ask_next(0)
+
+            else:
+
+                _proceed()
 
         cancel_button.connect(
             "clicked",
@@ -6408,7 +6961,6 @@ def _run_autostart() -> int:
         host = entry.get("host") or ""
         share = entry.get("share") or ""
         path = entry.get("path") or ""
-        username = entry.get("username") or ""
 
         if is_mounted(
             path,
@@ -6422,15 +6974,9 @@ def _run_autostart() -> int:
 
             continue
 
-        password = _secure_load_password(
-            host,
-            share,
-            username
+        password = _load_share_password(
+            entry
         )
-
-        if not password:
-
-            password = entry.get("password") or ""
 
         if not password:
 
