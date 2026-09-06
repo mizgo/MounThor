@@ -15,12 +15,12 @@ APP_DIR="${XDG_DATA_HOME}/mounthor"
 BIN_DIR="${HOME}/.local/bin"
 APPLICATIONS_DIR="${XDG_DATA_HOME}/applications"
 
-APP_SOURCE="${PROJECT_DIR}/mounthor.py"
+PACKAGE_SOURCE="${PROJECT_DIR}"
 LAUNCHER_SOURCE="${PROJECT_DIR}/scripts/mounthor"
 HELPER_SOURCE="${PROJECT_DIR}/scripts/mounthor-mount-helper"
 DESKTOP_SOURCE="${PROJECT_DIR}/data/io.github.mizgo.MounThor.desktop.in"
 
-APP_TARGET="${APP_DIR}/mounthor.py"
+PACKAGE_TARGET="${APP_DIR}/MounThor"
 BIN_TARGET="${BIN_DIR}/mounthor"
 HELPER_TARGET="${APP_DIR}/scripts/mounthor-mount-helper"
 DESKTOP_TARGET="${APPLICATIONS_DIR}/io.github.mizgo.MounThor.desktop"
@@ -29,9 +29,17 @@ DESKTOP_TARGET="${APPLICATIONS_DIR}/io.github.mizgo.MounThor.desktop"
 # Validation
 # ============================================================================
 
-if [[ ! -f "${APP_SOURCE}" ]]; then
+if [[ ! -f "${PACKAGE_SOURCE}/__main__.py" ]]; then
 
-    echo "Error: mounthor.py not found."
+    echo "Error: MounThor package not found (missing __main__.py)."
+
+    exit 1
+
+fi
+
+if [[ ! -d "${PACKAGE_SOURCE}/core" ]] || [[ ! -d "${PACKAGE_SOURCE}/ui" ]]; then
+
+    echo "Error: MounThor package structure incomplete (missing core/ or ui/ directories)."
 
     exit 1
 
@@ -61,7 +69,7 @@ if [[ ! -f "${DESKTOP_SOURCE}" ]]; then
 
 fi
 
-if [[ -f "${APP_TARGET}" ]]; then
+if [[ -d "${PACKAGE_TARGET}" ]]; then
 
     IS_UPDATE=true
 
@@ -81,13 +89,25 @@ mkdir -p \
     "${APPLICATIONS_DIR}"
 
 # ============================================================================
-# Application
+# Application (install as Python package)
 # ============================================================================
 
-install \
-    -m 0644 \
-    "${APP_SOURCE}" \
-    "${APP_TARGET}"
+if [[ "${IS_UPDATE}" == true ]]; then
+
+    echo "Updating MounThor package..."
+
+else
+
+    echo "Installing MounThor package..."
+
+fi
+
+rsync -a \
+    --exclude='__pycache__' \
+    --exclude='*.pyc' \
+    --exclude='.git' \
+    "${PACKAGE_SOURCE}/" \
+    "${PACKAGE_TARGET}/"
 
 # ============================================================================
 # Launcher

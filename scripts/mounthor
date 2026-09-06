@@ -3,7 +3,6 @@
 set -euo pipefail
 
 XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
+APP_ROOT="${XDG_DATA_HOME}/mounthor"
 
-exec python3 \
-    "${XDG_DATA_HOME}/mounthor/mounthor.py" \
-    "$@"
+PYTHONPATH="${APP_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" exec python3 -m MounThor "$@"

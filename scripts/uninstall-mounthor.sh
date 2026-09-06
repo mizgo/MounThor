@@ -12,7 +12,7 @@ APP_DIR="${XDG_DATA_HOME}/mounthor"
 BIN_DIR="${HOME}/.local/bin"
 APPLICATIONS_DIR="${XDG_DATA_HOME}/applications"
 
-APP_TARGET="${APP_DIR}/mounthor.py"
+APP_TARGET="${APP_DIR}/MounThor"
 BIN_TARGET="${BIN_DIR}/mounthor"
 HELPER_SOURCE_TARGET="${APP_DIR}/scripts/mounthor-mount-helper"
 HELPER_BIN_TARGET="${BIN_DIR}/mounthor-mount-helper"
@@ -138,12 +138,20 @@ fi
 # Remove application files
 # ============================================================================
 
+rm -rf \
+    "${APP_TARGET}"
+
+# ============================================================================
+# Remove launcher and helper binaries
+# ============================================================================
+
 rm -f \
-    "${APP_TARGET}" \
     "${BIN_TARGET}" \
-    "${HELPER_SOURCE_TARGET}" \
-    "${HELPER_BIN_TARGET}" \
-    "${DESKTOP_TARGET}"
+    "${HELPER_BIN_TARGET}"
+
+rmdir \
+    "${BIN_DIR}" \
+    2>/dev/null || true
 
 rmdir \
     "${APP_DIR}/scripts" \
