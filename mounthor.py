@@ -54,7 +54,7 @@ APP_ID = "io.github.mizgo.MounThor"
 
 APP_NAME = "MounThor"
 APP_VERSION = "0.9.0"
-APP_RELEASE_DATE = "28 August 2026"
+APP_RELEASE_DATE = "09 September 2026"
 APP_AUTHOR = "mizgo"
 
 CONFIG_DIR = (
@@ -7148,13 +7148,12 @@ class MounThorApp(
 
         about.set_release_notes(
             "<p>New in this version:</p>"
-            "<p>MounThor can now run as a service at system startup and automatically mount your shares at login, requiring only a one-time SMB credential and superuser password setup.</p>"
+            "<p>MounThor can now run as a service at system startup and automatically mount your shares at login, requiring only a one-time SMB credential and superuser password setup. You can also easily clear saved passwords for all or selected shares from the Main Menu.</p>"
              "<ul>"
-                "<li>...</li>"
-                "<li>..</li>"
-                "<li>...</li>"
-                "<li>...</li>"
-                "<li>...</li>"
+                "<li>Added automount at system startup with one-time SMB credential and superuser password setup.</li>"
+                "<li>Added the capability to run headlessly as a system service for the new automount-at-startup feature.</li>"
+                "<li>Added a Forget Passwords option to clear passwords for all or selected shares.</li>"
+                "<li>Added logic to automatically disable Automount at system startup when a password is removed via the Forget Passwords dialog.</li>"
             "</ul>"
             "<p>New in 0.8.1 release:</p>"
             "<ul>"

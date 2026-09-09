@@ -51,6 +51,8 @@ The interface follows the system's GTK light and dark themes and respects the co
 - Automatically clean up temporary CIFS credential files left after an unexpected application exit.
 - GTK4/libadwaita interface supporting system light and dark themes and the configured accent color.
 - Responsive status feedback with spinners, icons, toasts, and logging.
+- Automount at login with a systemd user service.
+- Forget Passwords option to remove stored credentials.
 
 ### Security
 MounThor uses the Freedesktop Secret Service API for secure credential storage when available. If Secret Service is not available, MounThor can still be used without saving passwords, or the user can explicitly choose to save a password unencrypted.
