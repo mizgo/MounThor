@@ -6965,6 +6965,11 @@ class MounThorApp(
                 halign=Gtk.Align.START,
             )
             row_label.set_selectable(False)
+            # Add padding to make each row taller / more visible
+            row_label.set_margin_top(MOUNT_PADDING_TOP)
+            row_label.set_margin_bottom(MOUNT_PADDING_BOTTOM)
+            row_label.set_margin_start(MOUNT_PADDING_LEFT)
+            row_label.set_margin_end(MOUNT_PADDING_RIGHT)
             listbox.append(row_label)
 
         content.append(listbox)
@@ -6990,11 +6995,17 @@ class MounThorApp(
     def _forget_password_for_share(
         self,
         row: MountRow,
-    ) -> bool:
+    ) -> dict:
         """Remove stored credentials for a single share row.
-        Returns True if any credential data was removed.
+        Returns a dict with stats:
+          - passwords_removed: int (0 or 1)
+          - automount_disabled: bool
+          - saved: bool (config was saved)
         """
-        changed = False
+        passwords_removed = 0
+        automount_disabled = False
+        saved = False
+
         entry = row.entry
 
         host = entry.get("host", "")
@@ -7006,7 +7017,7 @@ class MounThorApp(
         if storage == "secret-service":
             try:
                 _secure_delete_password(host, share, username)
-                changed = True
+                passwords_removed += 1
             except Exception as exc:
                 LOGGER.warning(
                     "Could not delete Secret Service credential "
@@ -7019,17 +7030,22 @@ class MounThorApp(
         elif storage == "plaintext":
             if entry.get("password"):
                 entry["password"] = ""
-                changed = True
+                passwords_removed += 1
 
         if entry.get("system_automount", False):
             _disable_automount_service()
-            changed = True
+            automount_disabled = True
 
-        if changed:
+        if passwords_removed > 0 or automount_disabled:
             self.save_current_rows()
             self.rebuild_rows()
+            saved = True
 
-        return changed
+        return {
+            "passwords_removed": passwords_removed,
+            "automount_disabled": automount_disabled,
+            "saved": saved,
+        }
 
     def _on_forget_passwords_action(
         self,
@@ -7055,11 +7071,31 @@ class MounThorApp(
             heading = "Forget Passwords"
             message = f"Forget stored credentials for {len(selected)} share(s)."
 
+        total_passwords_removed = 0
+        total_automount_disabled = 0
+
         def on_confirmed():
+            nonlocal total_passwords_removed, total_automount_disabled
             for row in selected:
-                self._forget_password_for_share(row)
+                stats = self._forget_password_for_share(row)
+                total_passwords_removed += stats["passwords_removed"]
+                total_automount_disabled += stats["automount_disabled"]
+
+            if total_passwords_removed > 0 or total_automount_disabled > 0:
+                self.save_current_rows()
+                self.rebuild_rows()
+
             self.deselect_all()
-            self.toast(f"Forget password(s) for {len(selected)} share(s).")
+
+            if total_automount_disabled:
+                self.toast(
+                    f"Forget complete: {total_passwords_removed} credential(s) found and removed, "
+                    f"{total_automount_disabled} automount service(s) disabled.",
+                )
+            else:
+                self.toast(
+                    f"Forget complete: {total_passwords_removed} credential(s) found and removed.",
+                )
 
         self._show_forget_passwords_dialog(
             names,
