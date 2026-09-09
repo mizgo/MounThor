@@ -36,6 +36,19 @@ LOGGER = logging.getLogger(
 # ============================================================================
 # Application constants and paths
 # ============================================================================
+# Core application metadata — used for GUI dialogs, service names, and CLI identification.
+
+# XDG-compliant configuration directory: ~/.config/mounthor
+# Falls back to ~/.config/mounthor when XDG_CONFIG_HOME is not set.
+
+# XDG-compliant state directory: ~/.local/state/mounthor
+# Falls back to ~/.local/state/mounthor when XDG_STATE_HOME is not set.
+
+# Log file location within the state directory.
+
+# Determines which privilege escalation method to use for privileged operations:
+#   False (pkexec) — Polkit-based system authorization (recommended for desktop use)
+#   True  (sudo)   — sudo-based authorization (useful for headless/server environments)
 
 APP_ID = "io.github.mizgo.MounThor"
 
@@ -77,6 +90,17 @@ USE_SUDO = False
 # ============================================================================
 # System automount (login-time mounting) paths
 # ============================================================================
+# Helper binary used by systemd to perform privileged SMB mount operations
+# at system boot, independent of the GUI application.
+
+# Polkit rule file that grants the MounThor helper binary permission to
+# perform mount operations without requiring a full password prompt each time.
+
+# User-level systemd directory for the automount service unit.
+# The service is placed here so it's scoped to the current user only.
+
+# Service unit name and file path for the systemd automount service.
+# This service is started at boot to monitor and mount system_automount shares.
 
 HELPER_NAME = "mounthor-mount-helper"
 
@@ -119,6 +143,10 @@ MOUNT_CARD_HOVER = 0.85
 # ============================================================================
 # Logging
 # ============================================================================
+# Configure a root logger that writes to both the log file and stderr.
+# Uses a rotating log file to prevent unbounded disk growth.
+# The log file is created with restrictive permissions (0o600) so only the
+# owning user can read/write it.
 
 def _configure_logging() -> None:
 
@@ -169,6 +197,11 @@ def _configure_logging() -> None:
 # ============================================================================
 # Credential storage
 # ============================================================================
+# Provides secure password storage using the Freedesktop Secret Service API.
+# This API integrates with the system keyring (e.g., gnome-keyring, KeePassXC,
+# or other secret service backends) for encrypted storage of sensitive credentials.
+# The service name "MounThor" is used as the key namespace so credentials can be
+# scoped per-application and per-share.
 
 CREDENTIAL_SERVICE = "MounThor"
 
@@ -321,6 +354,36 @@ def _secure_delete_password(
 # ============================================================================
 # Configuration management
 # ============================================================================
+# Handles loading and saving of the SMB share configuration file (mounts.json).
+# The save operation uses an atomic write pattern (write to temp file, then rename)
+# to prevent partial writes from corrupting the configuration file.
+# Configuration entries are structured with:
+#   - id: unique token (auto-generated)
+#   - name: human-readable share name
+#   - host: NAS hostname or IP address
+#   - share: SMB share name
+#   - path: local mount point
+#   - username: SMB username (or empty to use current Linux user)
+#   - options: comma-separated cifs mount options
+#   - automount: auto-mount when MounThor starts
+#   - system_automount: auto-mount at system login
+#   - password: stored password (plaintext or Secret Service)
+#   - credential_storage: "none", "plaintext", or "secret-service"
+# Handles loading and saving of the SMB share configuration file (mounts.json).
+# The save operation uses an atomic write pattern (write to temp file, then rename)
+# to prevent partial writes from corrupting the configuration file.
+# Configuration entries are structured with:
+#   - id: unique token (auto-generated)
+#   - name: human-readable share name
+#   - host: NAS hostname or IP address
+#   - share: SMB share name
+#   - path: local mount point
+#   - username: SMB username (or empty to use current Linux user)
+#   - options: comma-separated cifs mount options
+#   - automount: auto-mount when MounThor starts
+#   - system_automount: auto-mount at system login
+#   - password: stored password (plaintext or Secret Service)
+#   - credential_storage: "none", "plaintext", or "secret-service"
 
 def load_config() -> dict:
 
@@ -500,6 +563,11 @@ def entry_from_data(
 # ============================================================================
 # Login helpers
 # ============================================================================
+# Helper functions for resolving user credentials from configuration entries.
+# These functions handle the effective username calculation (using the entry's
+# configured username or falling back to the current Linux user) and password
+# loading from the configured credential storage method (plaintext or Secret Service).
+
 
 def _get_effective_username(
     entry,
@@ -570,6 +638,13 @@ def _has_stored_password(
 # ============================================================================
 # Mount helpers
 # ============================================================================
+# Core mount and unmount operations — the heart of the application.
+# do_mount(): Creates a temporary CIFS credential file and invokes /usr/bin/mount -t cifs.
+# do_unmount(): Verifies the correct mount is detected before invoking /usr/bin/umount.
+# Both functions return (ok, message) tuples for error reporting and UI feedback.
+# These are the only two functions that invoke actual filesystem operations,
+# making them the critical security boundary between the application and the kernel.
+
 
 def _unescape_mount_field(
     value: str,
@@ -953,6 +1028,24 @@ def _clean_cifs_options(
 # ============================================================================
 # System automount support (login-time mounting)
 # ============================================================================
+# Manages the systemd-based login-time automount infrastructure:
+#   - _install_helper: Copies the mounthor-mount-helper script to ~/.local/bin
+#     (used by systemd to perform privileged mount operations at boot).
+#   - _polkit_rule_content: Returns the Polkit rule XML that authorizes
+#     the helper binary to perform mount operations via pkexec.
+#   - _ensure_polkit_rule: Writes the Polkit rule file with proper permissions.
+#   - _ensure_automount_service: Creates and enables the systemd service unit
+#     for the automount daemon.
+#   - _ensure_system_automount_ready: Performs all setup steps and returns success.
+# Manages the systemd-based login-time automount infrastructure:
+#   - _install_helper: Copies the mounthor-mount-helper script to ~/.local/bin
+#     (used by systemd to perform privileged mount operations at boot).
+#   - _polkit_rule_content: Returns the Polkit rule XML that authorizes
+#     the helper binary to perform mount operations via pkexec.
+#   - _ensure_polkit_rule: Writes the Polkit rule file with proper permissions.
+#   - _ensure_automount_service: Creates and enables the systemd service unit
+#     for the automount daemon.
+#   - _ensure_system_automount_ready: Performs all setup steps and returns success.
 
 def _install_helper() -> bool:
 
@@ -1330,6 +1423,14 @@ def mount_entry_privileged(
 # ============================================================================
 # Mount operation
 # ============================================================================
+# Implements the actual mount and unmount operations using /usr/bin/mount and
+# /usr/bin/umount. These functions create temporary CIFS credential files
+# (with restrictive permissions), invoke the mount command, and clean up
+# temporary files after the operation completes.
+# do_mount(): Creates a temp file with cifs credentials, runs mount -t cifs,
+#            cleans up on success/failure, and returns (ok, message).
+# do_unmount(): Reads the current mount info to verify the correct mount is
+#              being removed, then runs umount and returns (ok, message).
 
 def do_mount(
     entry: dict,
@@ -2086,6 +2187,14 @@ def install_mount_list_css():
 # ============================================================================
 # Mount row
 # ============================================================================
+# The MountRow class represents a single row in the GTK4 Adw.TreeView
+# that displays one SMB share configuration. Each row contains:
+#   - An Adw.ActionRow with the share name, host, and path
+#   - A switch toggle for quick mount/unmount
+#   - Click handling to open edit dialog when not in batch mode
+#   - Selection management for batch operations
+# The class bridges the data model (dict entries) with the UI layer
+# and exposes methods to update the visual state (busy, mounted, selected).
 
 class MountRow(
     Adw.ActionRow,
@@ -3066,6 +3175,11 @@ class MounThorApp(
     # =========================================================================
     # Mount / unmount
     # =========================================================================
+    # Core mount operation — creates a temporary CIFS credential file and
+    # invokes /usr/bin/mount -t cifs. The temp file is created with 0o600
+    # permissions so only the current user can read it. After the mount
+    # succeeds, the temp file is removed. The function returns (ok, message)
+    # for error reporting and UI feedback.
 
     def toggle_mount(
         self,
@@ -6831,8 +6945,15 @@ class MounThorApp(
 
         about.set_release_notes(
             "<p>New in this version:</p>"
-            "<p>Layered mounting of multiple shares to the same mount path is now detected and prevented.</p>" 
-            "<p>MounThor now detects attempts to mount a share to a path that is already occupied. Depending on the situation, it can offer to replace the existing share mount with the requested one. For batch operations containing multiple mount requests targeting the same path, MounThor instead alerts the user to the conflict and does not perform the operation.</p>"
+            "<p>MounThor can now run as a service at system startup and automatically mount your shares at login, requiring only a one-time SMB credential and superuser password setup.</p>"
+             "<ul>"
+                "<li>...</li>"
+                "<li>..</li>"
+                "<li>...</li>"
+                "<li>...</li>"
+                "<li>...</li>"
+            "</ul>"
+            "<p>New in 0.8.1 release:</p>"
             "<ul>"
                 "<li>Improved handling of multiple SMB shares configured with the same mount path.</li>"
                 "<li>Fixed incorrect mounted-state detection when different shares use the same local path.</li>"
@@ -6943,6 +7064,17 @@ class MounThorApp(
 # ============================================================================
 # System automount entry point (--autostart)
 # ============================================================================
+# Headless CLI entry point for login-time system automount.
+# Reads the configuration file and mounts all entries with "system_automount"
+# enabled. No GUI is involved — this runs at boot via systemd.
+# Returns a JSON summary (mounted/skipped/failed) to stdout for logging.
+# Exit code: 0 on success, 1 on configuration error.
+# Headless CLI entry point for login-time system automount.
+# Reads the configuration file and mounts all entries with "system_automount"
+# enabled. No GUI is involved — this runs at boot via systemd.
+# Returns a JSON summary (mounted/skipped/failed) to stdout for logging.
+# Exit code: 0 on success, 1 on configuration error.
+
 
 def _run_autostart() -> int:
 
@@ -7052,6 +7184,14 @@ def _run_autostart() -> int:
 # ============================================================================
 # Main / privileged helper entry point
 # ============================================================================
+# Entry point for batch operations and headless automation:
+#   --batch-mount:   Reads shares from stdin (JSON array) and mounts them
+#                    with elevated privileges (used by MounThorApp in background threads).
+#   --batch-unmount: Reads shares from stdin (JSON array) and unmounts them
+#                    with elevated privileges (used by MounThorApp in background threads).
+#   --autostart:     Mounts all system_automount shares at login (no GUI).
+#   (no args):       Launches the full GUI application.
+
 
 def main():
 
