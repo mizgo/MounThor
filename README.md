@@ -46,13 +46,13 @@ The interface follows the system's GTK light and dark themes and respects the co
 - Use the current Linux account name as the SMB username without storing it.
 - Configure custom CIFS mount options such as vers=3.1.1.
 - Configure shares to automount when MounThor starts.
+- Configure shares to automount at login with a systemd user service.
 - Edit, duplicate, and remove saved shares.
+- Forget Passwords option to remove stored credentials.
 - Detect mount path conflicts and optionally replace an existing mount with another share.
 - Automatically clean up temporary CIFS credential files left after an unexpected application exit.
 - GTK4/libadwaita interface supporting system light and dark themes and the configured accent color.
 - Responsive status feedback with spinners, icons, toasts, and logging.
-- Automount at login with a systemd user service.
-- Forget Passwords option to remove stored credentials.
 
 ### Security
 MounThor uses the Freedesktop Secret Service API for secure credential storage when available. If Secret Service is not available, MounThor can still be used without saving passwords, or the user can explicitly choose to save a password unencrypted.
@@ -67,6 +67,7 @@ Versions prior to 0.8.0 store saved passwords in the JSON configuration file. Wh
 - libadwaita
 - cifs-utils
 - polkit (pkexec)
+- Freedesktop Secret Service (optional)
 
 ## Run from source
 
