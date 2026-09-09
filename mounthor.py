@@ -2664,6 +2664,11 @@ class MounThorApp(
         )
 
         menu.append(
+            "Forget Passwords",
+            "app.forget-passwords",
+        )
+
+        menu.append(
             "Clear Selection",
             "app.deselect-all",
         )
@@ -2754,6 +2759,20 @@ class MounThorApp(
 
         self.add_action(
             disconnect_action
+        )
+
+        forget_passwords_action = Gio.SimpleAction.new(
+            "forget-passwords",
+            None,
+        )
+
+        forget_passwords_action.connect(
+            "activate",
+            self._on_forget_passwords_action,
+        )
+
+        self.add_action(
+            forget_passwords_action
         )
 
         deselect_all_action = Gio.SimpleAction.new(
@@ -6900,6 +6919,154 @@ class MounThorApp(
         )
 
         return False
+
+    # =========================================================================
+    # Forget Passwords
+    # =========================================================================
+
+    def _show_forget_passwords_dialog(
+        self,
+        share_names: list[str],
+        heading: str,
+        message: str,
+        on_confirmed,
+    ):
+        """Show a confirmation dialog listing the shares whose passwords will be forgotten.
+        *on_confirmed* is called if the user confirms.
+        """
+        dialog = Adw.Dialog()
+        dialog.set_title(heading)
+        dialog.set_content_width(440)
+        dialog.set_content_height(280)
+
+        content = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=12,
+            margin_top=18,
+            margin_bottom=18,
+            margin_start=18,
+            margin_end=18,
+        )
+
+        label = Gtk.Label(
+            label=message,
+            wrap=True,
+            halign=Gtk.Align.START,
+        )
+
+        content.append(label)
+
+        # Use a simple label list instead of editable entry rows
+        listbox = make_entry_listbox()
+
+        for name in share_names:
+            row_label = Gtk.Label(
+                label=name,
+                halign=Gtk.Align.START,
+            )
+            row_label.set_selectable(False)
+            listbox.append(row_label)
+
+        content.append(listbox)
+
+        action_bar, cancel_button, confirm_button = make_action_bar(
+            "Cancel",
+            "Forget Passwords",
+        )
+
+        def on_cancel(_button):
+            dialog.close()
+
+        def on_confirm(_button):
+            on_confirmed()
+            dialog.close()
+
+        cancel_button.connect("clicked", on_cancel)
+        confirm_button.connect("clicked", on_confirm)
+
+        dialog.set_child(make_dialog_view(content, action_bar))
+        dialog.present(self.win)
+
+    def _forget_password_for_share(
+        self,
+        row: MountRow,
+    ) -> bool:
+        """Remove stored credentials for a single share row.
+        Returns True if any credential data was removed.
+        """
+        changed = False
+        entry = row.entry
+
+        host = entry.get("host", "")
+        share = entry.get("share", "")
+        username = _get_effective_username(entry)
+
+        storage = entry.get("credential_storage", "")
+
+        if storage == "secret-service":
+            try:
+                _secure_delete_password(host, share, username)
+                changed = True
+            except Exception as exc:
+                LOGGER.warning(
+                    "Could not delete Secret Service credential "
+                    "for %s/%s: %s",
+                    host,
+                    share,
+                    exc,
+                )
+
+        elif storage == "plaintext":
+            if entry.get("password"):
+                entry["password"] = ""
+                changed = True
+
+        if entry.get("system_automount", False):
+            _disable_automount_service()
+            changed = True
+
+        if changed:
+            self.save_current_rows()
+            self.rebuild_rows()
+
+        return changed
+
+    def _on_forget_passwords_action(
+        self,
+        _action,
+        _parameter,
+    ):
+        selected = self.selected_mount_rows()
+
+        if not selected:
+            # No explicit selection — operate on all shares
+            all_rows = list(self.rows.values())
+            if not all_rows:
+                self.toast("No shares found.")
+                return
+            selected = all_rows
+
+        names = [row.entry.get("name", "share") for row in selected]
+
+        if len(selected) == 1:
+            heading = f"Forget Password for \"{names[0]}\""
+            message = f"Remove stored credentials for the {names[0]} share."
+        else:
+            heading = "Forget Passwords"
+            message = f"Forget stored credentials for {len(selected)} share(s)."
+
+        def on_confirmed():
+            for row in selected:
+                self._forget_password_for_share(row)
+            self.deselect_all()
+            self.toast(f"Forget password(s) for {len(selected)} share(s).")
+
+        self._show_forget_passwords_dialog(
+            names,
+            heading,
+            message,
+            on_confirmed,
+        )
 
     # =========================================================================
     # About
