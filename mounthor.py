@@ -4095,6 +4095,19 @@ class MounThorApp(
                         password,
                     )
 
+                    # Also update the config so the app knows a password
+                    # is stored (prevents re-asking on manual mount).
+                    cfg_now = load_config()
+                    for mount in cfg_now["mounts"]:
+                        if (
+                            isinstance(mount, dict)
+                            and mount.get("id")
+                            == entry.get("id")
+                        ):
+                            mount["password"] = ""
+                            mount["credential_storage"] = "secret-service"
+                    save_config(cfg_now)
+
                     stored = True
 
             except Exception as exc:
@@ -4105,6 +4118,7 @@ class MounThorApp(
                     exc,
                 )
 
+            # Fallback to plaintext config when secret service fails.
             if not stored:
 
                 try:
@@ -6354,6 +6368,19 @@ class MounThorApp(
                         "response",
                         on_setup_choice,
                     )
+
+                    # Pre-check — if this share has no stored password,
+                    share_entry = entry_from_data(data)
+                    has_password = _has_stored_password(share_entry)
+
+                    if not has_password:
+
+                        self._ask_automount_password(
+                            share_entry,
+                            lambda: None,  # password stored; proceed to Polkit dialog
+                            on_cancel=lambda: None,
+                        )
+                        return
 
                     alert.present(
                         self.win
