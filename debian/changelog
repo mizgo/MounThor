@@ -1,0 +1,5 @@
+mounthor (0.10.1-1) unstable; urgency=medium
+
+  * Prepare native Debian package and AppImage distribution.
+
+ -- MounThor contributors <mizgo@users.noreply.github.com>  Sat, 10 Oct 2026 00:00:00 +0200

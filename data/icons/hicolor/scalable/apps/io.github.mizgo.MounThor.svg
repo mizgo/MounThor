@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="disk" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#62a0ea"/>
+      <stop offset="1" stop-color="#3584e4"/>
+    </linearGradient>
+  </defs>
+  <rect x="13" y="24" width="102" height="82" rx="15" fill="#241f31"/>
+  <path d="M25 43c0-8 17-14 39-14s39 6 39 14-17 14-39 14-39-6-39-14Z" fill="url(#disk)"/>
+  <path d="M25 43v17c0 8 17 14 39 14s39-6 39-14V43" fill="url(#disk)"/>
+  <path d="M25 60v17c0 8 17 14 39 14s39-6 39-14V60" fill="url(#disk)"/>
+  <path d="M25 43c0 8 17 14 39 14s39-6 39-14M25 60c0 8 17 14 39 14s39-6 39-14M25 77c0 8 17 14 39 14s39-6 39-14" fill="none" stroke="#1c71d8" stroke-width="3"/>
+  <circle cx="88" cy="43" r="3" fill="#fff"/>
+  <circle cx="88" cy="60" r="3" fill="#fff"/>
+  <circle cx="88" cy="77" r="3" fill="#fff"/>
+  <path d="M64 10v9m-5-5 5-5 5 5M64 118v-9m-5 5 5 5 5-5" fill="none" stroke="#33d17a" stroke-linecap="round" stroke-linejoin="round" stroke-width="4"/>
+</svg>

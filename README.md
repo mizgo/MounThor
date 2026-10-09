@@ -57,7 +57,7 @@ The interface follows the system's GTK light and dark themes and respects the co
 ### Security
 MounThor uses the Freedesktop Secret Service API for secure credential storage when available. If Secret Service is not available, MounThor can still be used without saving passwords, or the user can explicitly choose to save a password unencrypted.
 
-Versions prior to 0.8.0 store saved passwords in the JSON configuration file. When upgrading to 0.8.0 or later, MounThor will offer to migrate passwords stored in the configuration file to Secret Service when the corresponding share is mounted.
+If `python3-secretstorage` is unavailable, MounThor offers a choice to continue without Secret Service. Passwords saved in this mode are stored as plain text in the JSON configuration. If Secret Service becomes available later, MounThor will offer to migrate plain text passwords.
 
 ## Requirements
 
@@ -67,7 +67,7 @@ Versions prior to 0.8.0 store saved passwords in the JSON configuration file. Wh
 - libadwaita
 - cifs-utils
 - polkit (pkexec)
-- Freedesktop Secret Service (optional)
+- Freedesktop Secret Service (optional; provided by `python3-secretstorage`)
 
 ## Run from source
 
@@ -84,7 +84,7 @@ MounThor stores its data in the standard XDG locations:
 * `~/.config/mounthor/mounts.json` — saved shares and configuration
 * `~/.local/state/mounthor/mounthor.log` — application log
 
-Secret Service (system keyring) is used for stored passwords when available, so they are not kept in the configuration file.
+Saved passwords use Secret Service when enabled and available. If you continue without Secret Service and choose to remember a password, it is stored as plain text in the JSON configuration.
 
 ## Development
 
@@ -99,11 +99,15 @@ MounThor is currently developed and tested with:
 
 ## Installation
 
-Download the latest MounThor release archive and extract it.
+### RPM, DEB, and AppImage releases
 
-### Install
+- **RPM packages** are built on Rocky Linux 9.8 and target EL9-compatible systems.
+- **DEB packages** are built on PikaOS 4 and target modern Debian Sid-based distributions.
+- **AppImages** use the target system's Python, GTK, and libadwaita libraries. They should work on most systems with library versions ranging from those available in Rocky Linux 9.8 to those in PikaOS 4.
 
-Open a terminal in the extracted MounThor directory and run:
+### Shell Script Installation
+
+Download the latest MounThor release archive and extract it. Open a terminal in the extracted MounThor directory and run:
 
 ```bash
 ./scripts/install-mounthor.sh
@@ -119,7 +123,7 @@ No administrator privileges are required.
 
 After installation, MounThor should appear in your desktop environment's application menu. If it does not appear immediately, reopen the application launcher or allow a few moments for the desktop menu to refresh.
 
-### Upgrade
+### Shell Script Upgrade
 
 To upgrade an existing installation, download and extract the newer release and run the same installer:
 
@@ -131,7 +135,7 @@ The installer automatically replaces the installed application files.
 
 Your saved shares, configuration, and application logs are preserved during upgrades.
 
-### Uninstall
+### Shell Script Uninstallation
 
 From the extracted MounThor directory, run:
 

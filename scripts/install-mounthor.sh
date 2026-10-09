@@ -19,11 +19,15 @@ APP_SOURCE="${PROJECT_DIR}/mounthor.py"
 LAUNCHER_SOURCE="${PROJECT_DIR}/scripts/mounthor"
 HELPER_SOURCE="${PROJECT_DIR}/scripts/mounthor-mount-helper"
 DESKTOP_SOURCE="${PROJECT_DIR}/data/io.github.mizgo.MounThor.desktop.in"
+ICON_SOURCE="${PROJECT_DIR}/data/icons/hicolor/scalable/apps/io.github.mizgo.MounThor.svg"
+METAINFO_SOURCE="${PROJECT_DIR}/data/io.github.mizgo.MounThor.metainfo.xml"
 
 APP_TARGET="${APP_DIR}/mounthor.py"
 BIN_TARGET="${BIN_DIR}/mounthor"
 HELPER_TARGET="${APP_DIR}/scripts/mounthor-mount-helper"
 DESKTOP_TARGET="${APPLICATIONS_DIR}/io.github.mizgo.MounThor.desktop"
+ICON_TARGET="${XDG_DATA_HOME}/icons/hicolor/scalable/apps/io.github.mizgo.MounThor.svg"
+METAINFO_TARGET="${XDG_DATA_HOME}/metainfo/io.github.mizgo.MounThor.metainfo.xml"
 
 # ============================================================================
 # Validation
@@ -61,6 +65,14 @@ if [[ ! -f "${DESKTOP_SOURCE}" ]]; then
 
 fi
 
+if [[ ! -f "${ICON_SOURCE}" || ! -f "${METAINFO_SOURCE}" ]]; then
+
+    echo "Error: application icon or AppStream metadata is missing."
+
+    exit 1
+
+fi
+
 if [[ -f "${APP_TARGET}" ]]; then
 
     IS_UPDATE=true
@@ -78,7 +90,9 @@ fi
 mkdir -p \
     "${APP_DIR}/scripts" \
     "${BIN_DIR}" \
-    "${APPLICATIONS_DIR}"
+    "${APPLICATIONS_DIR}" \
+    "$(dirname -- "${ICON_TARGET}")" \
+    "$(dirname -- "${METAINFO_TARGET}")"
 
 # ============================================================================
 # Application
@@ -132,6 +146,9 @@ install \
     "${desktop_tmp}" \
     "${DESKTOP_TARGET}"
 
+install -m 0644 "${ICON_SOURCE}" "${ICON_TARGET}"
+install -m 0644 "${METAINFO_SOURCE}" "${METAINFO_TARGET}"
+
 # ============================================================================
 # Refresh desktop database
 # ============================================================================
@@ -140,6 +157,15 @@ if command -v update-desktop-database >/dev/null 2>&1; then
 
     update-desktop-database \
         "${APPLICATIONS_DIR}" \
+        >/dev/null 2>&1 || true
+
+fi
+
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+
+    gtk-update-icon-cache \
+        --force \
+        "${XDG_DATA_HOME}/icons/hicolor" \
         >/dev/null 2>&1 || true
 
 fi

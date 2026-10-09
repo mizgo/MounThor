@@ -1,0 +1,17 @@
+Source: mounthor
+Section: net
+Priority: optional
+Maintainer: MounThor contributors <mizgo@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.7.2
+Rules-Requires-Root: no
+Homepage: https://github.com/mizgo/MounThor
+
+Package: mounthor
+Architecture: all
+Depends: ${misc:Depends}, python3 (>= 3.9), python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1, cifs-utils, pkexec, polkitd
+Suggests: python3-secretstorage, gnome-keyring
+Description: GTK4/libadwaita SMB/CIFS share manager
+ MounThor stores SMB share settings and mounts CIFS network shares.
+ Passwords can be requested when needed, kept in Secret Service, or
+ explicitly saved in the JSON configuration file.

@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=MounThor
 Comment=CIFS/SMB mount manager for Linux
-Exec=@MOUNTHOR_EXEC@
+Exec=/usr/bin/mounthor
 Icon=io.github.mizgo.MounThor
 Terminal=false
 Type=Application

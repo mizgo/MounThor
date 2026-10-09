@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.mizgo.MounThor</id>
+  <name>MounThor</name>
+  <summary>Manage and mount SMB/CIFS network shares</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <developer_name>mizgo</developer_name>
+  <launchable type="desktop-id">io.github.mizgo.MounThor.desktop</launchable>
+  <description>
+    <p>MounThor saves SMB share settings and mounts network shares with GTK and libadwaita.</p>
+  </description>
+  <provides>
+    <binary>mounthor</binary>
+  </provides>
+  <url type="homepage">https://github.com/mizgo/MounThor</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.10.1" date="2026-10-10"/>
+  </releases>
+</component>

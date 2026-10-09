@@ -64,8 +64,8 @@ LOGGER = logging.getLogger(
 APP_ID = "io.github.mizgo.MounThor"
 
 APP_NAME = "MounThor"
-APP_VERSION = "0.10.0"
-APP_RELEASE_DATE = "09 October 2026"
+APP_VERSION = "0.10.1"
+APP_RELEASE_DATE = "10 October 2026"
 APP_AUTHOR = "mizgo"
 
 CONFIG_DIR = (
@@ -1272,6 +1272,26 @@ def _ensure_polkit_rule() -> bool:
 
 def _automount_service_content() -> str:
 
+    def systemd_quote(value):
+        value = value.replace("%", "%%")
+        value = value.replace("\\", "\\\\")
+        value = value.replace('"', '\\"')
+        return f'"{value}"'
+
+    appimage = os.environ.get("APPIMAGE")
+    if appimage:
+        command = [appimage, "--autostart"]
+    else:
+        command = [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "--autostart",
+        ]
+    autostart_command = " ".join(
+        systemd_quote(argument)
+        for argument in command
+    )
+
     return (
         "[Unit]\n"
         "Description=MounThor - automount CIFS shares at login\n"
@@ -1279,7 +1299,7 @@ def _automount_service_content() -> str:
         "\n"
         "[Service]\n"
         "Type=oneshot\n"
-        f"ExecStart={MOUNTHOR_BIN} --autostart\n"
+        f"ExecStart={autostart_command}\n"
         "\n"
         "[Install]\n"
         "WantedBy=default.target\n"
@@ -8273,7 +8293,7 @@ class MounThorApp(
                             "<li>Improved visual highlighting of shares and other UI elements.</li>"
                             "<li>Fixed share toggle state not resetting when the password dialog is dismissed with Esc.</li>"
                             "<li>Improved compatibility with older Linux libraries while retaining modern library support on newer systems.</li>"
-                            "<li>Added Secret Service startup detection with the option to quit or continue without it. If the user chooses to continue, the choice is remembered, while a silent check runs at every startup to offer activation and automatic migration of saved passwords when Secret Service becomes available.</li>"
+                            "<li>Added Secret Service startup detection with the option to quit or continue without it, with automatically offered migration of saved passwords when Secret Service becomes available</li>"
                         "</ul>"
             "<p>New in 0.9.0 release:</p>"
              "<ul>"

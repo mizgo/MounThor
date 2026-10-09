@@ -1,0 +1,6 @@
+mounthor.py usr/lib/mounthor/
+scripts/mounthor-mount-helper usr/lib/mounthor/scripts/
+packaging/linux/mounthor usr/bin/
+data/io.github.mizgo.MounThor.desktop usr/share/applications/
+data/io.github.mizgo.MounThor.metainfo.xml usr/share/metainfo/
+data/icons/hicolor/scalable/apps/io.github.mizgo.MounThor.svg usr/share/icons/hicolor/scalable/apps/
