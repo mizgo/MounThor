@@ -16,12 +16,21 @@ import json
 import logging
 import os
 import secrets
-import secretstorage
 import shutil
 import subprocess
 import sys
 import threading
 from pathlib import Path
+
+try:
+    import secretstorage
+except ImportError as exc:
+    secretstorage = None
+    SECRETSTORAGE_IMPORT_ERROR = exc
+else:
+    SECRETSTORAGE_IMPORT_ERROR = None
+
+HAS_SECRETSTORAGE = secretstorage is not None
 
 import gi
 
@@ -38,7 +47,7 @@ LOGGER = logging.getLogger(
 # ============================================================================
 # Application constants and paths
 # ============================================================================
-# Core application metadata \u2014 used for GUI dialogs, service names, and CLI identification.
+# Core application metadata — used for GUI dialogs, service names, and CLI identification.
 
 # XDG-compliant configuration directory: ~/.config/mounthor
 # Falls back to ~/.config/mounthor when XDG_CONFIG_HOME is not set.
@@ -49,8 +58,8 @@ LOGGER = logging.getLogger(
 # Log file location within the state directory.
 
 # Determines which privilege escalation method to use for privileged operations:
-#   False (pkexec) \u2014 Polkit-based system authorization (recommended for desktop use)
-#   True  (sudo)   \u2014 sudo-based authorization (useful for headless/server environments)
+#   False (pkexec) — Polkit-based system authorization (recommended for desktop use)
+#   True  (sudo)   — sudo-based authorization (useful for headless/server environments)
 
 APP_ID = "io.github.mizgo.MounThor"
 
@@ -207,8 +216,20 @@ def _configure_logging() -> None:
 
 CREDENTIAL_SERVICE = "MounThor"
 
+SECRET_SERVICE_MODE_KEY = "secret_service_mode"
+SECRET_SERVICE_MODE_AUTO = "auto"
+SECRET_SERVICE_MODE_PLAINTEXT_ONLY = "plaintext-only"
+SECRET_SERVICE_MODE_ENABLED = "secret-service"
+SECRET_SERVICE_MIGRATION_DISMISSED_KEY = (
+    "secret_service_migration_offer_dismissed"
+)
+
 
 def _secret_service_connection():
+    if not HAS_SECRETSTORAGE:
+        raise RuntimeError(
+            "The python3-secretstorage package is not installed."
+        )
     return secretstorage.dbus_init()
 
 
@@ -245,6 +266,9 @@ def _secret_service_attributes(
 
 def _secure_storage_available() -> bool:
 
+    if not HAS_SECRETSTORAGE:
+        return False
+
     try:
 
         connection = _secret_service_connection()
@@ -258,6 +282,34 @@ def _secure_storage_available() -> bool:
     except Exception:
 
         return False
+
+
+def _secret_service_probe() -> tuple[bool, str]:
+    """Check the Secret Service endpoint without unlocking its collection."""
+
+    if not HAS_SECRETSTORAGE:
+        return False, "python3-secretstorage package is missing"
+
+    try:
+        connection = _secret_service_connection()
+        collection = secretstorage.get_default_collection(connection)
+        state = "locked" if collection.is_locked() else "unlocked"
+        return True, f"Secret Service is responding ({state} collection)"
+    except Exception as exc:
+        return False, f"Secret Service is unavailable: {exc}"
+
+
+def _secret_service_enabled_for_config(cfg: dict | None = None) -> bool:
+    if not HAS_SECRETSTORAGE:
+        return False
+
+    if cfg is None:
+        cfg = load_config()
+
+    return cfg.get(
+        SECRET_SERVICE_MODE_KEY,
+        SECRET_SERVICE_MODE_AUTO,
+    ) != SECRET_SERVICE_MODE_PLAINTEXT_ONLY
 
 def _secure_store_password(
     host: str,
@@ -584,13 +636,13 @@ def _get_effective_username(
 
 def _load_share_password(
     entry: dict,
+    allow_secret_service: bool | None = None,
 ) -> str | None:
 
     """Return the password for a share entry, if any.
 
-    Checks Secret Service first (identity keyed on host/share/username),
-    then falls back to the plaintext config field. This mirrors the lookup
-    used by the headless login-time automount path.
+    Reads Secret Service entries only when the configured app mode allows it,
+    then falls back to the plaintext config field.
     """
 
     host = entry.get("host") or ""
@@ -601,46 +653,56 @@ def _load_share_password(
 
         return None
 
-    try:
+    if allow_secret_service is None:
+        allow_secret_service = _secret_service_enabled_for_config()
 
-        password = _secure_load_password(
-            host,
-            share,
-            username,
-        )
+    if (
+        allow_secret_service
+        and entry.get("credential_storage") == "secret-service"
+    ):
+        try:
 
-    except Exception as exc:
+            password = _secure_load_password(
+                host,
+                share,
+                username,
+            )
 
-        LOGGER.warning(
-            "Could not query Secret Service for "
-            "//%s/%s: %s",
-            host,
-            share,
-            exc,
-        )
+        except Exception as exc:
 
-        password = None
+            LOGGER.warning(
+                "Could not query Secret Service for "
+                "//%s/%s: %s",
+                host,
+                share,
+                exc,
+            )
 
-    if password:
+            password = None
 
-        return password
+        if password:
+            return password
 
     return entry.get("password") or None
 
 
 def _has_stored_password(
     entry: dict,
+    allow_secret_service: bool | None = None,
 ) -> bool:
 
     """True if a usable password is stored for this share entry."""
 
-    return _load_share_password(entry) is not None
+    return _load_share_password(
+        entry,
+        allow_secret_service,
+    ) is not None
 
 
 # ============================================================================
 # Mount helpers
 # ============================================================================
-# Core mount and unmount operations \u2014 the heart of the application.
+# Core mount and unmount operations — the heart of the application.
 # do_mount(): Creates a temporary CIFS credential file and invokes /usr/bin/mount -t cifs.
 # do_unmount(): Verifies the correct mount is detected before invoking /usr/bin/umount.
 # Both functions return (ok, message) tuples for error reporting and UI feedback.
@@ -2542,7 +2604,7 @@ class MountRow(
         self.set_subtitle(
             f"//{entry.get('host', '')}/"
             f"{entry.get('share', '')}"
-            f"  \u2192  "
+            f"  →  "
             f"{entry.get('path', '')}"
         )
         stabilize_action_row_measurement(self)
@@ -3065,9 +3127,284 @@ class MounThorApp(
 
         self._batch_active = False
 
+        self.startup_config = load_config()
+        self.secret_service_mode = self.startup_config.get(
+            SECRET_SERVICE_MODE_KEY,
+            SECRET_SERVICE_MODE_AUTO,
+        )
+        self.secret_service_enabled = (
+            _secret_service_enabled_for_config(
+                self.startup_config
+            )
+        )
+
         self._reorder_drag_row = None
         self._reorder_drop_row = None
         self._reorder_drop_before = None
+
+    def _set_secret_service_preferences(
+        self,
+        mode,
+        migration_dismissed=None,
+    ) -> bool:
+
+        cfg = load_config()
+        cfg[SECRET_SERVICE_MODE_KEY] = mode
+
+        if migration_dismissed is None:
+            cfg.pop(SECRET_SERVICE_MIGRATION_DISMISSED_KEY, None)
+        else:
+            cfg[SECRET_SERVICE_MIGRATION_DISMISSED_KEY] = bool(
+                migration_dismissed
+            )
+
+        try:
+            save_config(cfg)
+        except OSError as exc:
+            LOGGER.error(
+                "Could not save Secret Service preference: %s",
+                exc,
+            )
+            return False
+
+        self.startup_config = cfg
+        self.secret_service_mode = mode
+        self.secret_service_enabled = (
+            _secret_service_enabled_for_config(cfg)
+        )
+        return True
+
+    def _continue_startup_after_storage_check(self):
+        GLib.idle_add(self._automount_on_startup)
+
+    def _migrate_plaintext_config_passwords(self):
+        cfg = load_config()
+        candidates = [
+            mount
+            for mount in cfg.get("mounts", [])
+            if isinstance(mount, dict)
+            and (mount.get("password") or "")
+            and mount.get("credential_storage") != "secret-service"
+        ]
+
+        migrated = 0
+        failed = 0
+
+        for mount in candidates:
+            try:
+                _secure_store_password(
+                    mount.get("host", ""),
+                    mount.get("share", ""),
+                    _get_effective_username(mount),
+                    mount["password"],
+                )
+                mount["password"] = ""
+                mount["credential_storage"] = "secret-service"
+                migrated += 1
+            except Exception as exc:
+                failed += 1
+                LOGGER.error(
+                    "Could not migrate SMB password for //%s/%s: %s",
+                    mount.get("host", ""),
+                    mount.get("share", ""),
+                    exc,
+                )
+
+        if migrated or not candidates:
+            cfg[SECRET_SERVICE_MODE_KEY] = SECRET_SERVICE_MODE_ENABLED
+            cfg.pop(SECRET_SERVICE_MIGRATION_DISMISSED_KEY, None)
+        else:
+            cfg[SECRET_SERVICE_MODE_KEY] = (
+                SECRET_SERVICE_MODE_PLAINTEXT_ONLY
+            )
+            cfg[SECRET_SERVICE_MIGRATION_DISMISSED_KEY] = False
+
+        try:
+            save_config(cfg)
+        except OSError as exc:
+            LOGGER.error(
+                "Could not save migrated credentials to configuration: %s",
+                exc,
+            )
+            return 0, len(candidates), str(exc)
+
+        self.startup_config = cfg
+        self.secret_service_mode = cfg[SECRET_SERVICE_MODE_KEY]
+        self.secret_service_enabled = (
+            _secret_service_enabled_for_config(cfg)
+        )
+        LOGGER.info(
+            "Secret Service migration finished: %d migrated, %d failed.",
+            migrated,
+            failed,
+        )
+        return migrated, failed, None
+
+    def _startup_secret_service_check(self):
+        cfg = load_config()
+        self.startup_config = cfg
+        self.secret_service_mode = cfg.get(
+            SECRET_SERVICE_MODE_KEY,
+            SECRET_SERVICE_MODE_AUTO,
+        )
+        self.secret_service_enabled = (
+            _secret_service_enabled_for_config(cfg)
+        )
+
+        LOGGER.info(
+            "Secret Service dependency check: python3-secretstorage %s.",
+            "installed" if HAS_SECRETSTORAGE else "missing",
+        )
+        if SECRETSTORAGE_IMPORT_ERROR is not None:
+            LOGGER.info(
+                "Secret Service import detail: %s",
+                SECRETSTORAGE_IMPORT_ERROR,
+            )
+
+        service_available, service_message = _secret_service_probe()
+        LOGGER.info(
+            "Secret Service startup probe: %s.",
+            service_message,
+        )
+
+        if not HAS_SECRETSTORAGE:
+            if cfg.get(SECRET_SERVICE_MIGRATION_DISMISSED_KEY):
+                self._set_secret_service_preferences(
+                    SECRET_SERVICE_MODE_PLAINTEXT_ONLY,
+                    migration_dismissed=False,
+                )
+
+            if self.secret_service_mode == SECRET_SERVICE_MODE_PLAINTEXT_ONLY:
+                self.secret_service_enabled = False
+                self._continue_startup_after_storage_check()
+                return GLib.SOURCE_REMOVE
+
+            alert = create_alert_dialog(
+                heading="Secret Service support is not installed",
+                body=(
+                    "Install the python3-secretstorage package to use "
+                    "encrypted password storage. You can quit and install "
+                    "it now, or continue without Secret Service. Passwords "
+                    "saved in this mode are stored as plain text in "
+                    "MounThor's JSON configuration. For better security, "
+                    "install Secret Service or use MounThor without saved "
+                    "passwords so it asks you each time."
+                ),
+            )
+            alert.add_response("quit", "Quit")
+            alert.add_response(
+                "continue",
+                "Continue without Secret Service",
+            )
+            alert.set_default_response("quit")
+            alert.set_close_response("quit")
+
+            def on_response(_alert, response):
+                if response == "continue":
+                    self._set_secret_service_preferences(
+                        SECRET_SERVICE_MODE_PLAINTEXT_ONLY,
+                        migration_dismissed=False,
+                    )
+                    self.secret_service_enabled = False
+                    LOGGER.info(
+                        "User chose to continue without Secret Service."
+                    )
+                    self._continue_startup_after_storage_check()
+                else:
+                    LOGGER.info(
+                        "User quit after Secret Service dependency notice."
+                    )
+                    self.quit()
+
+            alert.connect("response", on_response)
+            alert.present(self.win)
+            return GLib.SOURCE_REMOVE
+
+        if (
+            self.secret_service_mode
+            == SECRET_SERVICE_MODE_PLAINTEXT_ONLY
+            and service_available
+            and not cfg.get(SECRET_SERVICE_MIGRATION_DISMISSED_KEY, False)
+        ):
+            candidates = [
+                mount
+                for mount in cfg.get("mounts", [])
+                if isinstance(mount, dict)
+                and (mount.get("password") or "")
+                and mount.get("credential_storage") != "secret-service"
+            ]
+            count = len(candidates)
+            if count:
+                body = (
+                    f"Secret Service is now available. MounThor found "
+                    f"{count} password(s) stored as plain text in its "
+                    "configuration. You can move them to encrypted "
+                    "storage and enable Secret Service, or keep using "
+                    "MounThor without it."
+                )
+                enable_label = "Migrate passwords"
+            else:
+                body = (
+                    "Secret Service is now available. No saved plain-text "
+                    "passwords need migration. You can enable encrypted "
+                    "storage for future passwords, or keep using MounThor "
+                    "without Secret Service."
+                )
+                enable_label = "Enable Secret Service"
+
+            alert = create_alert_dialog(
+                heading="Secret Service is now available",
+                body=body,
+            )
+            alert.add_response("keep", "Keep using without Secret Service")
+            alert.add_response("enable", enable_label)
+            alert.set_default_response("keep")
+            alert.set_close_response("keep")
+
+            def on_response(_alert, response):
+                if response == "enable":
+                    migrated, failed, error = (
+                        self._migrate_plaintext_config_passwords()
+                    )
+                    if self.secret_service_enabled:
+                        if failed:
+                            self.toast(
+                                f"Secure Storage enabled: {migrated} "
+                                f"password(s) migrated, {failed} failed. "
+                                "Failed entries remain unchanged.",
+                                error=True,
+                            )
+                        elif migrated:
+                            self.toast(
+                                f"Migrated {migrated} password(s) to "
+                                "Secure Storage."
+                            )
+                        else:
+                            self.toast("Secure Storage enabled.")
+                    elif error:
+                        self.toast(
+                            f"Could not migrate passwords: {error}",
+                            error=True,
+                        )
+                else:
+                    self._set_secret_service_preferences(
+                        SECRET_SERVICE_MODE_PLAINTEXT_ONLY,
+                        migration_dismissed=True,
+                    )
+                    self.secret_service_enabled = False
+                    LOGGER.info(
+                        "User chose to keep using MounThor without "
+                        "Secret Service."
+                    )
+
+                self._continue_startup_after_storage_check()
+
+            alert.connect("response", on_response)
+            alert.present(self.win)
+            return GLib.SOURCE_REMOVE
+
+        self._continue_startup_after_storage_check()
+        return GLib.SOURCE_REMOVE
 
     def do_shutdown(
         self,
@@ -3328,7 +3665,7 @@ class MounThorApp(
         self.win.present()
 
         GLib.idle_add(
-            self._automount_on_startup
+            self._startup_secret_service_check
         )
 
     def _on_add_clicked(
@@ -3835,12 +4172,11 @@ class MounThorApp(
         self,
     ):
 
-        cfg = {
-            "mounts": [
-                row.entry
-                for row in self.rows.values()
-            ]
-        }
+        cfg = load_config()
+        cfg["mounts"] = [
+            row.entry
+            for row in self.rows.values()
+        ]
 
         save_config(
             cfg
@@ -3919,7 +4255,7 @@ class MounThorApp(
     # =========================================================================
     # Mount / unmount
     # =========================================================================
-    # Core mount operation \u2014 creates a temporary CIFS credential file and
+    # Core mount operation — creates a temporary CIFS credential file and
     # invokes /usr/bin/mount -t cifs. The temp file is created with 0o600
     # permissions so only the current user can read it. After the mount
     # succeeds, the temp file is removed. The function returns (ok, message)
@@ -4035,7 +4371,7 @@ class MounThorApp(
 
             else:
 
-                # "keep" \u2192 do nothing, existing mount stays
+                # "keep" → do nothing, existing mount stays
                 row.set_mounted(
                     is_mounted(
                         row.entry.get(
@@ -4161,7 +4497,7 @@ class MounThorApp(
 
             return
 
-        # Unmount succeeded \u2014 now proceed with normal mount flow
+        # Unmount succeeded — now proceed with normal mount flow
         LOGGER.info(
             "Unmounted existing share, proceeding to mount //%s/%s",
             row.entry.get("host"),
@@ -4278,12 +4614,15 @@ class MounThorApp(
                         )
 
                         row.entry["password"] = ""
+                        self._set_secret_service_preferences(
+                            SECRET_SERVICE_MODE_ENABLED
+                        )
 
                     elif credential_storage == "plaintext":
 
                         row.entry["password"] = password
 
-                    else:
+                    elif self.secret_service_enabled:
 
                         _secure_delete_password(
                             row.entry["host"],
@@ -4427,7 +4766,10 @@ class MounThorApp(
 
             try:
 
-                if not _secure_storage_available():
+                if (
+                    not self.secret_service_enabled
+                    or not _secure_storage_available()
+                ):
 
                     return False
 
@@ -4526,6 +4868,7 @@ class MounThorApp(
                 "credential_storage"
             )
             == "secret-service"
+            and self.secret_service_enabled
         ):
 
             try:
@@ -4573,7 +4916,10 @@ class MounThorApp(
 
             if password:
 
-                if _secure_storage_available():
+                if (
+                    self.secret_service_enabled
+                    and _secure_storage_available()
+                ):
 
                     ask_migrate_plaintext_password(
                         password
@@ -4810,7 +5156,10 @@ class MounThorApp(
 
             try:
 
-                if _secure_storage_available():
+                if (
+                    self.secret_service_enabled
+                    and _secure_storage_available()
+                ):
 
                     complete_connect(
                         password,
@@ -4989,7 +5338,19 @@ class MounThorApp(
                         ):
                             mount["password"] = ""
                             mount["credential_storage"] = "secret-service"
+                    cfg_now[SECRET_SERVICE_MODE_KEY] = (
+                        SECRET_SERVICE_MODE_ENABLED
+                    )
+                    cfg_now.pop(
+                        SECRET_SERVICE_MIGRATION_DISMISSED_KEY,
+                        None,
+                    )
                     save_config(cfg_now)
+                    self.startup_config = cfg_now
+                    self.secret_service_mode = (
+                        SECRET_SERVICE_MODE_ENABLED
+                    )
+                    self.secret_service_enabled = True
 
                     stored = True
 
@@ -5137,7 +5498,10 @@ class MounThorApp(
 
             try:
 
-                if _secure_storage_available():
+                if (
+                    self.secret_service_enabled
+                    and _secure_storage_available()
+                ):
 
                     complete_store(
                         password,
@@ -5220,7 +5584,7 @@ class MounThorApp(
                 path, host, share
             ):
 
-                # Already mounted with same share \u2014 skip entirely
+                # Already mounted with same share — skip entirely
                 continue
 
             elif is_mounted(path):
@@ -5247,7 +5611,7 @@ class MounThorApp(
 
         if duplicate_groups:
 
-            # The user's toggle click already flipped the switch on \u2014
+            # The user's toggle click already flipped the switch on —
             # reset every selected row to its real mount state.
             for row in selected_rows:
 
@@ -5608,7 +5972,7 @@ class MounThorApp(
                 "Enter one password for the selected batch.\n\n"
                 f"It will be used for {missing_count} selected share(s) "
                 "without a saved password.\n\n"
-                f"First share: \u201c{entry.get('name', 'Unnamed share')}\u201d"
+                f"First share: “{entry.get('name', 'Unnamed share')}”"
             ),
             wrap=True,
             halign=Gtk.Align.START,
@@ -5897,7 +6261,7 @@ class MounThorApp(
             label=(
                 f"Share {number} of {total}\n\n"
                 f"Enter the password for\n"
-                f"\u201c{entry.get('name', 'Unnamed share')}\u201d\n\n"
+                f"“{entry.get('name', 'Unnamed share')}”\n\n"
                 f"//{entry.get('host', '')}/"
                 f"{entry.get('share', '')}"
             ),
@@ -6063,7 +6427,7 @@ class MounThorApp(
             )
 
         self.toast(
-            f"{operation_name}: connecting {len(rows)} share(s)\u2026"
+            f"{operation_name}: connecting {len(rows)} share(s)…"
         )
 
         def worker():
@@ -6195,7 +6559,7 @@ class MounThorApp(
     ):
 
         self.toast(
-            f"{operation_name}: disconnecting {len(rows)} share(s)\u2026"
+            f"{operation_name}: disconnecting {len(rows)} share(s)…"
         )
 
         items = [
@@ -6268,7 +6632,7 @@ class MounThorApp(
             )
 
         self.toast(
-            f"Disconnecting {len(rows)} share(s)\u2026"
+            f"Disconnecting {len(rows)} share(s)…"
         )
 
         items = [
@@ -7022,7 +7386,8 @@ class MounThorApp(
                 )
 
             if (
-                credential_identity_changed
+                self.secret_service_enabled
+                and credential_identity_changed
                 and old_credential_storage
                 == "secret-service"
             ):
@@ -7255,7 +7620,7 @@ class MounThorApp(
                         on_setup_choice,
                     )
 
-                    # Pre-check \u2014 if this share has no stored password,
+                    # Pre-check — if this share has no stored password,
                     share_entry = entry_from_data(data)
                     has_password = _has_stored_password(share_entry)
 
@@ -7425,7 +7790,7 @@ class MounThorApp(
         dialog = create_dialog()
 
         dialog.set_title(
-            f"Remove \u201c{entry.get('name', 'share')}\u201d?"
+            f"Remove “{entry.get('name', 'share')}”?"
         )
 
         dialog.set_content_width(
@@ -7556,7 +7921,8 @@ class MounThorApp(
                     return
 
             if (
-                entry.get(
+                self.secret_service_enabled
+                and entry.get(
                     "credential_storage"
                 )
                 == "secret-service"
@@ -7668,7 +8034,7 @@ class MounThorApp(
         self.rebuild_rows()
 
         self.toast(
-            f"Removed \u201c{entry.get('name', 'share')}\u201d"
+            f"Removed “{entry.get('name', 'share')}”"
         )
 
         return False
@@ -7767,7 +8133,7 @@ class MounThorApp(
 
         storage = entry.get("credential_storage", "")
 
-        if storage == "secret-service":
+        if storage == "secret-service" and self.secret_service_enabled:
             try:
                 _secure_delete_password(host, share, username)
                 passwords_removed += 1
@@ -7808,7 +8174,7 @@ class MounThorApp(
         selected = self.selected_mount_rows()
 
         if not selected:
-            # No explicit selection \u2014 operate on all shares
+            # No explicit selection — operate on all shares
             all_rows = list(self.rows.values())
             if not all_rows:
                 self.toast("No shares found.")
@@ -7906,7 +8272,8 @@ class MounThorApp(
                             "<li>Added the ability to reorder shares in the share list.</li>"
                             "<li>Improved visual highlighting of shares and other UI elements.</li>"
                             "<li>Fixed share toggle state not resetting when the password dialog is dismissed with Esc.</li>"
-                            "<li>Improved compatibility with older Linux libraries while retaining modern library support on newer systems</li>"
+                            "<li>Improved compatibility with older Linux libraries while retaining modern library support on newer systems.</li>"
+                            "<li>Added Secret Service startup detection with the option to quit or continue without it. If the user chooses to continue, the choice is remembered, while a silent check runs at every startup to offer activation and automatic migration of saved passwords when Secret Service becomes available.</li>"
                         "</ul>"
             "<p>New in 0.9.0 release:</p>"
              "<ul>"
@@ -8031,12 +8398,12 @@ class MounThorApp(
 # ============================================================================
 # Headless CLI entry point for login-time system automount.
 # Reads the configuration file and mounts all entries with "system_automount"
-# enabled. No GUI is involved \u2014 this runs at boot via systemd.
+# enabled. No GUI is involved — this runs at boot via systemd.
 # Returns a JSON summary (mounted/skipped/failed) to stdout for logging.
 # Exit code: 0 on success, 1 on configuration error.
 # Headless CLI entry point for login-time system automount.
 # Reads the configuration file and mounts all entries with "system_automount"
-# enabled. No GUI is involved \u2014 this runs at boot via systemd.
+# enabled. No GUI is involved — this runs at boot via systemd.
 # Returns a JSON summary (mounted/skipped/failed) to stdout for logging.
 # Exit code: 0 on success, 1 on configuration error.
 
