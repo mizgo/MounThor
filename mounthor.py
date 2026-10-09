@@ -2174,12 +2174,45 @@ def install_mount_list_css():
             opacity: 0.55;
         }}
 
-        .smb-mount-list > row > *.smb-drop-before {{
-            border-top: 3px solid @accent_bg_color;
+        .smb-mount-list > row.smb-drop-before > * {{
+            box-shadow: inset 0 3px 0 @accent_bg_color;
         }}
 
-        .smb-mount-list > row > *.smb-drop-after {{
-            border-bottom: 3px solid @accent_bg_color;
+        .smb-mount-list > row.smb-drop-after > * {{
+            box-shadow: inset 0 -3px 0 @accent_bg_color;
+        }}
+
+        /* GTK may draw the drop-target frame on the ListBoxRow itself,
+           not only on its child (the Adw.ActionRow content). Suppress that
+           frame, then explicitly restore our insertion edge while this row
+           is the active drop target. */
+        .smb-mount-list > row:drop(active),
+        .smb-mount-list > row:drop(active) > * {{
+            outline-style: none;
+            outline-width: 0;
+            outline-color: transparent;
+            border-color: transparent;
+            box-shadow: none;
+        }}
+
+        .smb-mount-list > row.smb-drop-before:drop(active) > * {{
+            box-shadow: inset 0 3px 0 @accent_bg_color;
+        }}
+
+        .smb-mount-list > row.smb-drop-after:drop(active) > * {{
+            box-shadow: inset 0 -3px 0 @accent_bg_color;
+        }}
+
+        /* Suppress focus decoration across the app, including controls and
+           menu buttons. The insertion-edge classes remain the sole DnD cue. */
+        *:focus,
+        *:focus-visible,
+        *:focus-within {{
+            outline-style: none;
+            outline-width: 0;
+            outline-color: transparent;
+            border-color: transparent;
+            box-shadow: none;
         }}
         """.encode()
 
@@ -2526,8 +2559,57 @@ class MountRow(
     def _on_drag_begin(
         self,
         _drag_source,
-        _drag,
+        drag,
     ):
+
+        selected_rows = self.app.selected_mount_rows()
+
+        if len(selected_rows) > 1:
+
+            drag_icon = Gtk.DragIcon.get_for_drag(drag)
+
+            # Reuse snapshots of the real selected rows. This keeps the group
+            # preview visually consistent with the single-row drag preview.
+            preview = Gtk.Box(
+                orientation=Gtk.Orientation.VERTICAL,
+                spacing=4,
+            )
+            preview.set_margin_top(2)
+            preview.set_margin_bottom(2)
+            preview.set_margin_start(2)
+            preview.set_margin_end(2)
+
+            for row in selected_rows:
+
+                picture = Gtk.Picture()
+                picture.set_paintable(
+                    Gtk.WidgetPaintable.new(row)
+                )
+                picture.set_content_fit(
+                    Gtk.ContentFit.CONTAIN
+                )
+                picture.set_can_shrink(False)
+
+                width = row.get_width()
+                height = row.get_height()
+                picture.set_size_request(
+                    width if width > 0 else -1,
+                    height if height > 0 else -1,
+                )
+
+                preview.append(picture)
+
+            drag_icon.set_child(preview)
+
+        else:
+
+            # Keep the normal single-share preview, without exposing its ID.
+            drag_source_paintable = Gtk.WidgetPaintable.new(self)
+            _drag_source.set_icon(
+                drag_source_paintable,
+                24,
+                18,
+            )
 
         self.add_css_class(
             "smb-dragging"
@@ -7876,4 +7958,3 @@ if __name__ == "__main__":
     sys.exit(
         main()
     )
-    
