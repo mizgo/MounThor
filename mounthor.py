@@ -10,6 +10,8 @@ Configuration:
     ~/.config/mounthor/mounts.json
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -36,7 +38,7 @@ LOGGER = logging.getLogger(
 # ============================================================================
 # Application constants and paths
 # ============================================================================
-# Core application metadata — used for GUI dialogs, service names, and CLI identification.
+# Core application metadata \u2014 used for GUI dialogs, service names, and CLI identification.
 
 # XDG-compliant configuration directory: ~/.config/mounthor
 # Falls back to ~/.config/mounthor when XDG_CONFIG_HOME is not set.
@@ -47,8 +49,8 @@ LOGGER = logging.getLogger(
 # Log file location within the state directory.
 
 # Determines which privilege escalation method to use for privileged operations:
-#   False (pkexec) — Polkit-based system authorization (recommended for desktop use)
-#   True  (sudo)   — sudo-based authorization (useful for headless/server environments)
+#   False (pkexec) \u2014 Polkit-based system authorization (recommended for desktop use)
+#   True  (sudo)   \u2014 sudo-based authorization (useful for headless/server environments)
 
 APP_ID = "io.github.mizgo.MounThor"
 
@@ -638,7 +640,7 @@ def _has_stored_password(
 # ============================================================================
 # Mount helpers
 # ============================================================================
-# Core mount and unmount operations — the heart of the application.
+# Core mount and unmount operations \u2014 the heart of the application.
 # do_mount(): Creates a temporary CIFS credential file and invokes /usr/bin/mount -t cifs.
 # do_unmount(): Verifies the correct mount is detected before invoking /usr/bin/umount.
 # Both functions return (ok, message) tuples for error reporting and UI feedback.
@@ -1980,6 +1982,168 @@ def _privileged_batch_main(
 
 
 # ============================================================================
+# GTK / libadwaita compatibility
+# ============================================================================
+# Detect APIs rather than distro names. Adw.Dialog, Adw.AlertDialog and
+# Adw.AboutDialog are not available in older libadwaita releases (for example
+# the 1.4.x series shipped by Rocky Linux 9).
+
+HAS_ADW_DIALOG = hasattr(Adw, "Dialog")
+HAS_ADW_ALERT_DIALOG = hasattr(Adw, "AlertDialog")
+HAS_ADW_ABOUT_DIALOG = hasattr(Adw, "AboutDialog")
+
+
+class _LegacyAdwDialog:
+    """Small Adw.Dialog-compatible wrapper backed by Adw.Window."""
+
+    def __init__(self):
+        self._window = Adw.Window()
+        self._window.set_modal(True)
+        self._window.set_hide_on_close(False)
+        self._content_width = 560
+        self._content_height = 420
+        self._closed_handlers = []
+        self._is_closing = False
+        self._window.connect("close-request", self._on_close_request)
+
+        controller = Gtk.EventControllerKey()
+        controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        controller.connect("key-pressed", self._on_key_pressed)
+        self._window.add_controller(controller)
+
+    def _emit_closed(self):
+        if self._is_closing:
+            return
+        self._is_closing = True
+        for callback, user_data in tuple(self._closed_handlers):
+            callback(self, *user_data)
+
+    def _on_close_request(self, _window):
+        self._emit_closed()
+        return False
+
+    def _on_key_pressed(self, _controller, keyval, _keycode, _state):
+        if keyval == Gdk.KEY_Escape:
+            self.close()
+            return True
+        return False
+
+    def set_title(self, title):
+        self._window.set_title(title)
+
+    def set_content_width(self, width):
+        self._content_width = width
+        self._window.set_default_size(self._content_width, self._content_height)
+
+    def set_content_height(self, height):
+        self._content_height = height
+        self._window.set_default_size(self._content_width, self._content_height)
+
+    def set_child(self, child):
+        self._window.set_content(child)
+
+    def add_controller(self, controller):
+        self._window.add_controller(controller)
+
+    def connect(self, signal_name, callback, *user_data):
+        if signal_name == "closed":
+            self._closed_handlers.append((callback, user_data))
+            return len(self._closed_handlers)
+        return self._window.connect(signal_name, callback, *user_data)
+
+    def present(self, parent=None):
+        if parent is not None:
+            self._window.set_transient_for(parent)
+        self._window.set_modal(True)
+        self._window.present()
+
+    def close(self):
+        self._window.close()
+
+
+def create_dialog():
+    """Create a dialog using the newest API available on this system."""
+    if HAS_ADW_DIALOG:
+        return Adw.Dialog()
+    return _LegacyAdwDialog()
+
+
+class _LegacyAlertDialog:
+    """AlertDialog-like interface implemented with Adw.MessageDialog."""
+
+    def __init__(self, heading=None, body=None):
+        self._heading = heading
+        self._body = body
+        self._responses = []
+        self._default_response = None
+        self._close_response = None
+        self._response_appearances = {}
+        self._handlers = []
+
+    def set_heading(self, heading):
+        self._heading = heading
+
+    def set_body(self, body):
+        self._body = body
+
+    def add_response(self, response, label):
+        self._responses.append((response, label))
+
+    def set_default_response(self, response):
+        self._default_response = response
+
+    def set_close_response(self, response):
+        self._close_response = response
+
+    def set_response_appearance(self, response, appearance):
+        self._response_appearances[response] = appearance
+
+    def connect(self, signal_name, callback, *user_data):
+        if signal_name != "response":
+            raise ValueError(f"Unsupported legacy alert signal: {signal_name}")
+        self._handlers.append((callback, user_data))
+        return len(self._handlers)
+
+    def present(self, parent=None):
+        dialog = Adw.MessageDialog.new(parent, self._heading, self._body)
+        for response, label in self._responses:
+            dialog.add_response(response, label)
+        if self._default_response is not None:
+            dialog.set_default_response(self._default_response)
+        if self._close_response is not None:
+            dialog.set_close_response(self._close_response)
+        if hasattr(dialog, "set_response_appearance"):
+            for response, appearance in self._response_appearances.items():
+                dialog.set_response_appearance(response, appearance)
+        for callback, user_data in self._handlers:
+            dialog.connect(
+                "response",
+                lambda _dialog, response, cb=callback, extra=user_data:
+                    cb(self, response, *extra),
+            )
+        dialog.present()
+
+
+def create_alert_dialog(heading=None, body=None):
+    """Create an alert using AlertDialog when available, otherwise MessageDialog."""
+    if HAS_ADW_ALERT_DIALOG:
+        kwargs = {}
+        if heading is not None:
+            kwargs["heading"] = heading
+        if body is not None:
+            kwargs["body"] = body
+        return Adw.AlertDialog(**kwargs)
+    return _LegacyAlertDialog(heading, body)
+
+
+def create_about_dialog():
+    """Return the best available libadwaita About dialog implementation."""
+    if HAS_ADW_ABOUT_DIALOG:
+        return Adw.AboutDialog()
+    return Adw.AboutWindow()
+
+
+# ============================================================================
 # GTK helpers
 # ============================================================================
 
@@ -1988,6 +2152,35 @@ def get_text(
 ) -> str:
 
     return widget.get_text()
+
+
+def stabilize_action_row_measurement(
+    widget,
+) -> None:
+    """Give GTK 4.12 action-row labels a stable minimum width.
+
+    GTK 4.12 can report different minimum widths for wrapped labels in these
+    boxes when measured at unconstrained height, producing the "Expect
+    overlapping widgets" critical. A 23px floor matches the larger reported
+    minimum width while remaining below the labels' natural widths.
+    """
+
+    child = widget.get_first_child()
+    direct_children = []
+
+    while child is not None:
+        direct_children.append(child)
+        child = child.get_next_sibling()
+
+    if isinstance(widget, Gtk.Box):
+        for child in direct_children:
+            if isinstance(child, Gtk.Label):
+                width, height = child.get_size_request()
+                if width < 23:
+                    child.set_size_request(23, height)
+
+    for child in direct_children:
+        stabilize_action_row_measurement(child)
 
 
 def install_enter_action(
@@ -2216,7 +2409,15 @@ def install_mount_list_css():
         }}
         """.encode()
 
-    provider.load_from_data(CSS)
+    if hasattr(provider, "load_from_string"):
+        provider.load_from_string(CSS.decode("utf-8"))
+    else:
+        try:
+            provider.load_from_data(CSS)
+        except TypeError:
+            # Older PyGObject bindings expose load_from_data(data, length)
+            # and expect a Python string rather than bytes.
+            provider.load_from_data(CSS.decode("utf-8"), -1)
 
     display = Gdk.Display.get_default()
 
@@ -2341,9 +2542,10 @@ class MountRow(
         self.set_subtitle(
             f"//{entry.get('host', '')}/"
             f"{entry.get('share', '')}"
-            f"  →  "
+            f"  \u2192  "
             f"{entry.get('path', '')}"
         )
+        stabilize_action_row_measurement(self)
 
         self.icon = (
             Gtk.Image.new_from_icon_name(
@@ -2437,22 +2639,13 @@ class MountRow(
             valign=Gtk.Align.CENTER,
         )
 
-        suffix.append(
-            self.duplicate_button
-        )
+        suffix.append(self.duplicate_button)
+        suffix.append(self.edit_button)
+        suffix.append(self.delete_button)
+        suffix.append(self.switch)
 
-        suffix.append(
-            self.edit_button
-        )
-
-        suffix.append(
-            self.delete_button
-        )
-
-        suffix.append(
-            self.switch
-        )
-
+        # Keep the action buttons and mount switch inside the row's suffix.
+        # Without this, the controls are created but never enter the layout.
         self.add_suffix(
             suffix
         )
@@ -3726,7 +3919,7 @@ class MounThorApp(
     # =========================================================================
     # Mount / unmount
     # =========================================================================
-    # Core mount operation — creates a temporary CIFS credential file and
+    # Core mount operation \u2014 creates a temporary CIFS credential file and
     # invokes /usr/bin/mount -t cifs. The temp file is created with 0o600
     # permissions so only the current user can read it. After the mount
     # succeeds, the temp file is removed. The function returns (ok, message)
@@ -3799,7 +3992,7 @@ class MounThorApp(
         share = row.entry.get("share", "")
         path = row.entry.get("path", "")
 
-        dialog = Adw.AlertDialog()
+        dialog = create_alert_dialog()
         dialog.set_heading(
             "Mount path already in use"
         )
@@ -3842,7 +4035,7 @@ class MounThorApp(
 
             else:
 
-                # "keep" → do nothing, existing mount stays
+                # "keep" \u2192 do nothing, existing mount stays
                 row.set_mounted(
                     is_mounted(
                         row.entry.get(
@@ -3968,7 +4161,7 @@ class MounThorApp(
 
             return
 
-        # Unmount succeeded — now proceed with normal mount flow
+        # Unmount succeeded \u2014 now proceed with normal mount flow
         LOGGER.info(
             "Unmounted existing share, proceeding to mount //%s/%s",
             row.entry.get("host"),
@@ -4271,7 +4464,7 @@ class MounThorApp(
             password,
         ):
 
-            alert = Adw.AlertDialog(
+            alert = create_alert_dialog(
                 heading=(
                     "Password stored without encryption"
                 ),
@@ -4396,7 +4589,7 @@ class MounThorApp(
 
                 return
 
-        dialog = Adw.Dialog()
+        dialog = create_dialog()
 
         dialog.set_title(
             "SMB password"
@@ -4456,6 +4649,7 @@ class MounThorApp(
                 "Store the password for future mounts."
             ),
         )
+        stabilize_action_row_measurement(remember_row)
         remember_list.append(
             remember_row
         )
@@ -4519,7 +4713,7 @@ class MounThorApp(
             password,
         ):
 
-            alert = Adw.AlertDialog(
+            alert = create_alert_dialog(
                 heading=(
                     "Secure Credential Storage unavailable"
                 ),
@@ -4688,7 +4882,7 @@ class MounThorApp(
         host = entry.get("host") or ""
         share = entry.get("share") or ""
 
-        dialog = Adw.Dialog()
+        dialog = create_dialog()
 
         dialog.set_title(
             "SMB password"
@@ -4866,7 +5060,7 @@ class MounThorApp(
             password,
         ):
 
-            alert = Adw.AlertDialog(
+            alert = create_alert_dialog(
                 heading=(
                     "Secure Credential Storage unavailable"
                 ),
@@ -5026,7 +5220,7 @@ class MounThorApp(
                 path, host, share
             ):
 
-                # Already mounted with same share — skip entirely
+                # Already mounted with same share \u2014 skip entirely
                 continue
 
             elif is_mounted(path):
@@ -5053,7 +5247,7 @@ class MounThorApp(
 
         if duplicate_groups:
 
-            # The user's toggle click already flipped the switch on —
+            # The user's toggle click already flipped the switch on \u2014
             # reset every selected row to its real mount state.
             for row in selected_rows:
 
@@ -5212,7 +5406,7 @@ class MounThorApp(
             "This operation cannot be performed."
         )
 
-        dialog = Adw.AlertDialog()
+        dialog = create_alert_dialog()
         dialog.set_heading(
             "Duplicate mount paths"
         )
@@ -5386,7 +5580,7 @@ class MounThorApp(
         missing_count,
     ):
 
-        dialog = Adw.Dialog()
+        dialog = create_dialog()
 
         dialog.set_title(
             "Password required"
@@ -5414,7 +5608,7 @@ class MounThorApp(
                 "Enter one password for the selected batch.\n\n"
                 f"It will be used for {missing_count} selected share(s) "
                 "without a saved password.\n\n"
-                f"First share: “{entry.get('name', 'Unnamed share')}”"
+                f"First share: \u201c{entry.get('name', 'Unnamed share')}\u201d"
             ),
             wrap=True,
             halign=Gtk.Align.START,
@@ -5676,7 +5870,7 @@ class MounThorApp(
         total,
     ):
 
-        dialog = Adw.Dialog()
+        dialog = create_dialog()
 
         dialog.set_title(
             "Password required"
@@ -5703,7 +5897,7 @@ class MounThorApp(
             label=(
                 f"Share {number} of {total}\n\n"
                 f"Enter the password for\n"
-                f"“{entry.get('name', 'Unnamed share')}”\n\n"
+                f"\u201c{entry.get('name', 'Unnamed share')}\u201d\n\n"
                 f"//{entry.get('host', '')}/"
                 f"{entry.get('share', '')}"
             ),
@@ -5737,6 +5931,7 @@ class MounThorApp(
                 "Store the password for future mounts."
             ),
         )
+        stabilize_action_row_measurement(remember_row)
 
         remember_list.append(
             remember_row
@@ -5868,7 +6063,7 @@ class MounThorApp(
             )
 
         self.toast(
-            f"{operation_name}: connecting {len(rows)} share(s)…"
+            f"{operation_name}: connecting {len(rows)} share(s)\u2026"
         )
 
         def worker():
@@ -6000,7 +6195,7 @@ class MounThorApp(
     ):
 
         self.toast(
-            f"{operation_name}: disconnecting {len(rows)} share(s)…"
+            f"{operation_name}: disconnecting {len(rows)} share(s)\u2026"
         )
 
         items = [
@@ -6073,7 +6268,7 @@ class MounThorApp(
             )
 
         self.toast(
-            f"Disconnecting {len(rows)} share(s)…"
+            f"Disconnecting {len(rows)} share(s)\u2026"
         )
 
         items = [
@@ -6227,7 +6422,7 @@ class MounThorApp(
 
             is_duplicate = False
 
-        dialog = Adw.Dialog()
+        dialog = create_dialog()
 
         if is_duplicate:
 
@@ -6430,6 +6625,7 @@ class MounThorApp(
                 "when MounThor starts."
             ),
         )
+        stabilize_action_row_measurement(automount_row)
 
         automount_row.set_active(
             bool(
@@ -6453,6 +6649,7 @@ class MounThorApp(
                 "at login, even when MounThor is not running."
             ),
         )
+        stabilize_action_row_measurement(system_automount_row)
 
         system_automount_row.set_active(
             bool(
@@ -7026,7 +7223,7 @@ class MounThorApp(
                             daemon=True,
                         ).start()
 
-                    alert = Adw.AlertDialog(
+                    alert = create_alert_dialog(
                         heading=(
                             "One-time authorization required"
                         ),
@@ -7058,7 +7255,7 @@ class MounThorApp(
                         on_setup_choice,
                     )
 
-                    # Pre-check — if this share has no stored password,
+                    # Pre-check \u2014 if this share has no stored password,
                     share_entry = entry_from_data(data)
                     has_password = _has_stored_password(share_entry)
 
@@ -7225,10 +7422,10 @@ class MounThorApp(
             entry.get("share"),
         )
 
-        dialog = Adw.Dialog()
+        dialog = create_dialog()
 
         dialog.set_title(
-            f"Remove “{entry.get('name', 'share')}”?"
+            f"Remove \u201c{entry.get('name', 'share')}\u201d?"
         )
 
         dialog.set_content_width(
@@ -7471,7 +7668,7 @@ class MounThorApp(
         self.rebuild_rows()
 
         self.toast(
-            f"Removed “{entry.get('name', 'share')}”"
+            f"Removed \u201c{entry.get('name', 'share')}\u201d"
         )
 
         return False
@@ -7490,7 +7687,7 @@ class MounThorApp(
         """Show a confirmation dialog listing the shares whose passwords will be forgotten.
         *on_confirmed* is called if the user confirms.
         """
-        dialog = Adw.Dialog()
+        dialog = create_dialog()
         dialog.set_title(heading)
         dialog.set_content_width(440)
         dialog.set_content_height(280)
@@ -7611,7 +7808,7 @@ class MounThorApp(
         selected = self.selected_mount_rows()
 
         if not selected:
-            # No explicit selection — operate on all shares
+            # No explicit selection \u2014 operate on all shares
             all_rows = list(self.rows.values())
             if not all_rows:
                 self.toast("No shares found.")
@@ -7684,7 +7881,7 @@ class MounThorApp(
         self,
     ):
 
-        about = Adw.AboutDialog()
+        about = create_about_dialog()
 
         about.set_application_name(
             APP_NAME
@@ -7709,6 +7906,7 @@ class MounThorApp(
                             "<li>Added the ability to reorder shares in the share list.</li>"
                             "<li>Improved visual highlighting of shares and other UI elements.</li>"
                             "<li>Fixed share toggle state not resetting when the password dialog is dismissed with Esc.</li>"
+                            "<li>Improved compatibility with older Linux libraries while retaining modern library support on newer systems</li>"
                         "</ul>"
             "<p>New in 0.9.0 release:</p>"
              "<ul>"
@@ -7820,9 +8018,12 @@ class MounThorApp(
             Gtk.License.GPL_3_0
         )
 
-        about.present(
-            self.win
-        )
+        
+        if HAS_ADW_ABOUT_DIALOG:
+            about.present(self.win)
+        else:
+            about.set_transient_for(self.win)
+            about.present()
 
 
 # ============================================================================
@@ -7830,12 +8031,12 @@ class MounThorApp(
 # ============================================================================
 # Headless CLI entry point for login-time system automount.
 # Reads the configuration file and mounts all entries with "system_automount"
-# enabled. No GUI is involved — this runs at boot via systemd.
+# enabled. No GUI is involved \u2014 this runs at boot via systemd.
 # Returns a JSON summary (mounted/skipped/failed) to stdout for logging.
 # Exit code: 0 on success, 1 on configuration error.
 # Headless CLI entry point for login-time system automount.
 # Reads the configuration file and mounts all entries with "system_automount"
-# enabled. No GUI is involved — this runs at boot via systemd.
+# enabled. No GUI is involved \u2014 this runs at boot via systemd.
 # Returns a JSON summary (mounted/skipped/failed) to stdout for logging.
 # Exit code: 0 on success, 1 on configuration error.
 
