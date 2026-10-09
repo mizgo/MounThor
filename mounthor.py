@@ -53,8 +53,8 @@ LOGGER = logging.getLogger(
 APP_ID = "io.github.mizgo.MounThor"
 
 APP_NAME = "MounThor"
-APP_VERSION = "0.9.0"
-APP_RELEASE_DATE = "09 September 2026"
+APP_VERSION = "0.10.0"
+APP_RELEASE_DATE = "09 October 2026"
 APP_AUTHOR = "mizgo"
 
 CONFIG_DIR = (
@@ -4473,6 +4473,22 @@ class MounThorApp(
             "Connect",
         )
 
+        password_submitted = False
+
+        def on_dialog_closed(
+            _dialog,
+        ):
+
+            # Adw.Dialog can be dismissed with Escape as well as the
+            # explicit Cancel button. Treat every dismissal before the
+            # password is submitted as cancellation so the mount switch
+            # cannot remain visually active.
+            if not password_submitted:
+
+                row.set_mounted(
+                    False
+                )
+
         def on_cancel(
             _button,
         ):
@@ -4487,6 +4503,9 @@ class MounThorApp(
             password,
             credential_storage,
         ):
+
+            nonlocal password_submitted
+            password_submitted = True
 
             dialog.close()
 
@@ -4638,6 +4657,11 @@ class MounThorApp(
         install_enter_action(
             dialog,
             connect_button,
+        )
+
+        dialog.connect(
+            "closed",
+            on_dialog_closed,
         )
 
         dialog.present(
@@ -7680,7 +7704,13 @@ class MounThorApp(
 
         about.set_release_notes(
             "<p>New in this version:</p>"
-            "<p>MounThor can now run as a service at system startup and automatically mount your shares at login, requiring only a one-time SMB credential and superuser password setup. You can also easily clear saved passwords for all or selected shares from the Main Menu.</p>"
+                        "<p>MounThor now lets you visually reorder shares in the GUI instead of manually editing the JSON config file.</p>"
+                         "<ul>"
+                            "<li>Added the ability to reorder shares in the share list.</li>"
+                            "<li>Improved visual highlighting of shares and other UI elements.</li>"
+                            "<li>Fixed share toggle state not resetting when the password dialog is dismissed with Esc.</li>"
+                        "</ul>"
+            "<p>New in 0.9.0 release:</p>"
              "<ul>"
                 "<li>Added automount at system startup with one-time SMB credential and superuser password setup.</li>"
                 "<li>Added the capability to run headlessly as a system service for the new automount-at-startup feature.</li>"
