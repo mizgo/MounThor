@@ -26,7 +26,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk
 
 LOGGER = logging.getLogger(
     "mounthor"
@@ -2169,6 +2169,18 @@ def install_mount_list_css():
             box-shadow: none;
             outline: none;
         }}
+
+        .smb-mount-list > row.smb-dragging > * {{
+            opacity: 0.55;
+        }}
+
+        .smb-mount-list > row > *.smb-drop-before {{
+            border-top: 3px solid @accent_bg_color;
+        }}
+
+        .smb-mount-list > row > *.smb-drop-after {{
+            border-bottom: 3px solid @accent_bg_color;
+        }}
         """.encode()
 
     provider.load_from_data(CSS)
@@ -2227,8 +2239,63 @@ class MountRow(
             "pressed",
             self._on_primary_pressed,
         )
+        self._click_controller.connect(
+            "released",
+            self._on_primary_released,
+        )
         self.add_controller(
             self._click_controller
+        )
+
+        self._drag_source = Gtk.DragSource()
+        self._drag_source.set_actions(
+            Gdk.DragAction.MOVE
+        )
+        self._drag_source.set_button(
+            Gdk.BUTTON_PRIMARY
+        )
+        self._drag_source.connect(
+            "prepare",
+            self._on_drag_prepare,
+        )
+        self._drag_source.connect(
+            "drag-begin",
+            self._on_drag_begin,
+        )
+        self._drag_source.connect(
+            "drag-end",
+            self._on_drag_end,
+        )
+        self._drag_source.connect(
+            "drag-cancel",
+            self._on_drag_cancel,
+        )
+        self.add_controller(
+            self._drag_source
+        )
+
+        self._drop_target = Gtk.DropTarget.new(
+            GObject.TYPE_STRING,
+            Gdk.DragAction.MOVE,
+        )
+        self._drop_target.connect(
+            "enter",
+            self._on_drop_enter,
+        )
+        self._drop_target.connect(
+            "motion",
+            self._on_drop_motion,
+        )
+        self._drop_target.connect(
+            "leave",
+            self._on_drop_leave,
+        )
+        self._drop_target.connect(
+            "drop",
+            self._on_drop,
+        )
+        self.add_controller(
+            self._drop_target
         )
 
         self.set_title(
@@ -2385,10 +2452,38 @@ class MountRow(
         y,
     ):
 
-        # The selection gesture lives on the whole ActionRow, so explicitly
-        # ignore presses that originated on one of the row's interactive
-        # controls (or on one of their internal child widgets).  Those
-        # controls must keep their normal GTK event handling.
+        # Do not claim normal row presses here. Gtk.DragSource needs to be
+        # able to claim the gesture after the pointer moves far enough to
+        # start a drag. Interactive controls are explicitly excluded so
+        # their own gestures keep working normally.
+        if self._is_interactive_pick(x, y) or self._busy:
+
+            _gesture.set_state(
+                Gtk.EventSequenceState.DENIED
+            )
+
+    def _on_primary_released(
+        self,
+        _gesture,
+        _n_press,
+        x,
+        y,
+    ):
+
+        if self._busy or self._is_interactive_pick(x, y):
+
+            return
+
+        self.app.select_mount_row(
+            self
+        )
+
+    def _is_interactive_pick(
+        self,
+        x: float,
+        y: float,
+    ) -> bool:
+
         picked = self.pick(
             x,
             y,
@@ -2399,16 +2494,9 @@ class MountRow(
 
         while widget is not None:
 
-            # Never let the row-selection gesture consume events destined
-            # for an interactive child.  This covers the actual controls
-            # as well as their internal child widgets (icons, labels, etc.).
             if isinstance(widget, (Gtk.Button, Gtk.Switch)):
 
-                _gesture.set_state(
-                    Gtk.EventSequenceState.DENIED
-                )
-
-                return
+                return True
 
             if widget is self:
 
@@ -2416,17 +2504,139 @@ class MountRow(
 
             widget = widget.get_parent()
 
-        if self._busy:
+        return False
 
-            return
+    def _on_drag_prepare(
+        self,
+        _drag_source,
+        x,
+        y,
+    ):
 
-        self.app.select_mount_row(
+        if self._busy or self._is_interactive_pick(x, y):
+
+            return None
+
+        self.app.select_mount_for_drag(self)
+
+        return Gdk.ContentProvider.new_for_value(
+            str(self.entry.get("id", ""))
+        )
+
+    def _on_drag_begin(
+        self,
+        _drag_source,
+        _drag,
+    ):
+
+        self.add_css_class(
+            "smb-dragging"
+        )
+
+        self.app.begin_reorder_drag(
             self
         )
 
-        _gesture.set_state(
-            Gtk.EventSequenceState.CLAIMED
+    def _on_drag_end(
+        self,
+        _drag_source,
+        _drag,
+        _delete_data,
+    ):
+
+        self.remove_css_class(
+            "smb-dragging"
         )
+
+        self.app.end_reorder_drag()
+
+    def _on_drag_cancel(
+        self,
+        _drag_source,
+        _drag,
+        _reason,
+    ):
+
+        self.remove_css_class(
+            "smb-dragging"
+        )
+
+        self.app.end_reorder_drag()
+
+    def _on_drop_enter(
+        self,
+        _drop_target,
+        _x,
+        y,
+    ):
+
+        self.app.update_reorder_drop_target(
+            self,
+            y,
+        )
+
+        return Gdk.DragAction.MOVE
+
+    def _on_drop_motion(
+        self,
+        _drop_target,
+        _x,
+        y,
+    ):
+
+        self.app.update_reorder_drop_target(
+            self,
+            y,
+        )
+
+        return Gdk.DragAction.MOVE
+
+    def _on_drop_leave(
+        self,
+        _drop_target,
+    ):
+
+        self.app.clear_reorder_drop_target()
+
+    def _on_drop(
+        self,
+        _drop_target,
+        value,
+        _x,
+        y,
+    ):
+
+        before = y < (self.get_height() / 2)
+
+        return self.app.finish_reorder_drop(
+            value,
+            self,
+            before,
+        )
+
+    def set_reorder_indicator(
+        self,
+        before: bool | None,
+    ):
+
+        self.remove_css_class(
+            "smb-drop-before"
+        )
+        self.remove_css_class(
+            "smb-drop-after"
+        )
+
+        if before is True:
+
+            self.add_css_class(
+                "smb-drop-before"
+            )
+
+        elif before is False:
+
+            self.add_css_class(
+                "smb-drop-after"
+            )
 
     def set_selected(
         self,
@@ -2579,6 +2789,10 @@ class MounThorApp(
         self._selection_anchor_id = None
 
         self._batch_active = False
+
+        self._reorder_drag_row = None
+        self._reorder_drop_row = None
+        self._reorder_drop_before = None
 
     def do_shutdown(
         self,
@@ -3085,6 +3299,242 @@ class MounThorApp(
         )
 
         self._selection_anchor_id = row_id
+
+    def select_mount_for_drag(
+        self,
+        row: MountRow,
+    ):
+
+        if not row.is_selected():
+
+            self.deselect_all()
+            row.set_selected(True)
+
+        self._selection_anchor_id = row.entry.get("id")
+
+    def begin_reorder_drag(
+        self,
+        row: MountRow,
+    ):
+
+        self._reorder_drag_row = row
+        self.clear_reorder_drop_target()
+
+    def update_reorder_drop_target(
+        self,
+        row: MountRow,
+        y: float,
+    ):
+
+        if self._reorder_drag_row is None:
+
+            return
+
+        if row.is_selected():
+
+            self.clear_reorder_drop_target()
+            return
+
+        before = y < (row.get_height() / 2)
+
+        if self._reorder_drop_row is row and self._reorder_drop_before == before:
+
+            return
+
+        self.clear_reorder_drop_target()
+
+        self._reorder_drop_row = row
+        self._reorder_drop_before = before
+
+        row.set_reorder_indicator(
+            before
+        )
+
+    def clear_reorder_drop_target(
+        self,
+    ):
+
+        if self._reorder_drop_row is not None:
+
+            self._reorder_drop_row.set_reorder_indicator(
+                None
+            )
+
+        self._reorder_drop_row = None
+        self._reorder_drop_before = None
+
+    def end_reorder_drag(
+        self,
+    ):
+
+        self.clear_reorder_drop_target()
+        self._reorder_drag_row = None
+
+    def finish_reorder_drop(
+        self,
+        source_id: str,
+        target_row: MountRow,
+        before: bool,
+    ) -> bool:
+
+        source_row = self.rows.get(source_id)
+
+        if source_row is None:
+
+            self.end_reorder_drag()
+            return False
+
+        target_id = target_row.entry.get("id")
+
+        if not target_id or source_id == target_id:
+
+            self.end_reorder_drag()
+            return False
+
+        ordered_rows = list(self.rows.values())
+        selected_rows = self.selected_mount_rows()
+
+        selected_ids = {
+            row.entry.get("id")
+            for row in selected_rows
+        }
+
+        moving_rows = [
+            row
+            for row in ordered_rows
+            if row.entry.get("id") in selected_ids
+        ]
+
+        if not moving_rows:
+
+            self.end_reorder_drag()
+            return False
+
+        remaining_rows = [
+            row
+            for row in ordered_rows
+            if row.entry.get("id") not in selected_ids
+        ]
+
+        target_index = next(
+            (
+                index
+                for index, row in enumerate(remaining_rows)
+                if row.entry.get("id") == target_id
+            ),
+            None,
+        )
+
+        if target_index is None:
+
+            self.end_reorder_drag()
+            return False
+
+        insert_index = target_index + (1 if not before else 0)
+
+        new_order = (
+            remaining_rows[:insert_index]
+            + moving_rows
+            + remaining_rows[insert_index:]
+        )
+
+        if [row.entry.get("id") for row in new_order] == [
+            row.entry.get("id") for row in ordered_rows
+        ]:
+
+            self.end_reorder_drag()
+            return False
+
+        cfg = load_config()
+        cfg_mounts = [
+            entry
+            for entry in cfg.get("mounts", [])
+            if isinstance(entry, dict)
+        ]
+        cfg_ids = [
+            entry.get("id")
+            for entry in cfg_mounts
+        ]
+        current_ids = [
+            row.entry.get("id")
+            for row in ordered_rows
+        ]
+
+        # Refuse to overwrite a configuration that changed structurally while
+        # the drag was in progress.  This avoids silently dropping a newly
+        # added share or reordering against a deleted one.
+        if sorted(cfg_ids) != sorted(current_ids):
+
+            self.end_reorder_drag()
+            self.toast(
+                "The share configuration changed. Reorder cancelled.",
+                error=True,
+            )
+            self.rebuild_rows()
+            return False
+
+        entries_by_id = {
+            entry.get("id"): entry
+            for entry in cfg_mounts
+            if entry.get("id")
+        }
+
+        reordered_entries = []
+
+        for row in new_order:
+
+            entry_id = row.entry.get("id")
+            entry = entries_by_id.get(entry_id)
+
+            if entry is None:
+
+                self.end_reorder_drag()
+                self.toast(
+                    "The share configuration changed. Reorder cancelled.",
+                    error=True,
+                )
+                self.rebuild_rows()
+                return False
+
+            reordered_entries.append(entry)
+
+        try:
+
+            save_config({
+                **cfg,
+                "mounts": reordered_entries,
+            })
+
+        except OSError as exc:
+
+            LOGGER.error(
+                "Could not save share order: %s",
+                exc,
+            )
+            self.end_reorder_drag()
+            self.toast(
+                f"Could not save share order: {exc}",
+                error=True,
+            )
+            return False
+
+        LOGGER.info(
+            "Reordered %d share(s).",
+            len(moving_rows),
+        )
+
+        self.end_reorder_drag()
+        self.rebuild_rows()
+
+        for row in self.rows.values():
+
+            if row.entry.get("id") in selected_ids:
+
+                row.set_selected(True)
+
+        self._selection_anchor_id = source_id
+
+        return True
 
     def selected_mount_rows(
         self,
@@ -7426,3 +7876,4 @@ if __name__ == "__main__":
     sys.exit(
         main()
     )
+    
