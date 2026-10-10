@@ -130,7 +130,8 @@ desktop_tmp="$(mktemp --suffix=.desktop)"
 trap 'rm -f "${desktop_tmp}"' EXIT
 
 sed \
-    "s|@MOUNTHOR_EXEC@|${BIN_TARGET}|g" \
+    -e "s|@MOUNTHOR_EXEC@|${BIN_TARGET}|g" \
+    -e "s|^Icon=.*|Icon=${ICON_TARGET}|" \
     "${DESKTOP_SOURCE}" \
     > "${desktop_tmp}"
 

@@ -37,6 +37,8 @@ Only the Python standard library is used so that this script does not
 depend on the application's full dependency set (gi, secretstorage).
 """
 
+from __future__ import annotations
+
 import json
 import os
 import pwd

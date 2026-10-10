@@ -3302,7 +3302,11 @@ class MounThorApp(
         )
 
         LOGGER.info(
-            "Secret Service dependency check: python3-secretstorage %s.",
+            "MounThor Python interpreter: %s",
+            sys.executable,
+        )
+        LOGGER.info(
+            "Secret Service Python dependency check: python3-secretstorage %s.",
             "installed" if HAS_SECRETSTORAGE else "missing",
         )
         if SECRETSTORAGE_IMPORT_ERROR is not None:
@@ -3330,11 +3334,13 @@ class MounThorApp(
                 return GLib.SOURCE_REMOVE
 
             alert = create_alert_dialog(
-                heading="Secret Service support is not installed",
+                heading="Secret Service Python support is unavailable",
                 body=(
-                    "Install the python3-secretstorage package to use "
-                    "encrypted password storage. You can quit and install "
-                    "it now, or continue without Secret Service. Passwords "
+                    "MounThor could not import the Python secretstorage "
+                    "module. Install the matching python3-secretstorage "
+                    "package to use encrypted password storage. You can "
+                    "quit and install it now, or continue without Secret "
+                    "Service. Passwords "
                     "saved in this mode are stored as plain text in "
                     "MounThor's JSON configuration. For better security, "
                     "install Secret Service or use MounThor without saved "
@@ -4913,77 +4919,22 @@ class MounThorApp(
                 self.win
             )
 
-        if (
-            entry.get(
-                "credential_storage"
-            )
-            == "secret-service"
-            and self.secret_service_enabled
-        ):
+        credential_storage = entry.get("credential_storage")
+        password = _load_share_password(
+            entry,
+            allow_secret_service=self.secret_service_enabled,
+        )
 
-            try:
-
-                password = _secure_load_password(
-                    entry["host"],
-                    entry["share"],
-                    _get_effective_username(
-                        entry
-                    ),
-                )
-
-            except Exception as exc:
-
-                LOGGER.warning(
-                    "Could not load SMB password "
-                    "from Secret Service: %s",
-                    exc,
-                )
-
-                password = None
-
-            if password:
-
-                self._mount(
-                    row,
-                    password,
-                )
-
-                return
-
-        if (
-            entry.get(
-                "credential_storage"
-            )
-            == "plaintext"
-        ):
-
-            password = (
-                entry.get(
-                    "password"
-                )
-                or ""
-            )
-
-            if password:
-
-                if (
-                    self.secret_service_enabled
-                    and _secure_storage_available()
-                ):
-
-                    ask_migrate_plaintext_password(
-                        password
-                    )
-
-                else:
-
-                    self._mount(
-                        row,
-                        password,
-                        None,
-                    )
-
-                return
+        if password:
+            if (
+                credential_storage == "plaintext"
+                and self.secret_service_enabled
+                and _secure_storage_available()
+            ):
+                ask_migrate_plaintext_password(password)
+            else:
+                self._mount(row, password)
+            return
 
         dialog = create_dialog()
 
@@ -6214,12 +6165,9 @@ class MounThorApp(
 
         entry = row.entry
 
-        saved_password = (
-            entry.get(
-                "password",
-                "",
-            )
-            or ""
+        saved_password = _load_share_password(
+            entry,
+            allow_secret_service=self.secret_service_enabled,
         )
 
         if saved_password:
@@ -7503,7 +7451,8 @@ class MounThorApp(
                     False,
                 ) is True
                 and not _has_stored_password(
-                    mount
+                    mount,
+                    allow_secret_service=self.secret_service_enabled,
                 )
             ]
 
@@ -7671,8 +7620,53 @@ class MounThorApp(
                     )
 
                     # Pre-check \u2014 if this share has no stored password,
-                    share_entry = entry_from_data(data)
-                    has_password = _has_stored_password(share_entry)
+                    saved_config = load_config()
+                    saved_mounts = [
+                        mount
+                        for mount in saved_config.get("mounts", [])
+                        if isinstance(mount, dict)
+                    ]
+                    target_id = (
+                        row.entry.get("id")
+                        if row is not None
+                        else None
+                    )
+                    share_entry = next(
+                        (
+                            mount
+                            for mount in saved_mounts
+                            if target_id
+                            and mount.get("id") == target_id
+                        ),
+                        None,
+                    )
+                    if share_entry is None:
+                        target_identity = (
+                            data.get("host"),
+                            data.get("share"),
+                            data.get("path"),
+                            _get_effective_username(data),
+                        )
+                        share_entry = next(
+                            (
+                                mount
+                                for mount in saved_mounts
+                                if (
+                                    mount.get("host"),
+                                    mount.get("share"),
+                                    mount.get("path"),
+                                    _get_effective_username(mount),
+                                ) == target_identity
+                            ),
+                            None,
+                        )
+                    if share_entry is None:
+                        share_entry = entry_from_data(data)
+
+                    has_password = _has_stored_password(
+                        share_entry,
+                        allow_secret_service=self.secret_service_enabled,
+                    )
 
                     if not has_password:
 
