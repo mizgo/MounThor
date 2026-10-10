@@ -19,8 +19,10 @@ install -d "${APPDIR}/usr/lib/mounthor/scripts" \
 install -m 0644 "${ROOT}/mounthor.py" "${APPDIR}/usr/lib/mounthor/mounthor.py"
 install -m 0755 "${ROOT}/scripts/mounthor-mount-helper" \
     "${APPDIR}/usr/lib/mounthor/scripts/mounthor-mount-helper"
+# appimagetool currently discovers AppStream data via the .appdata.xml name.
+# Keep .metainfo.xml as the canonical source used by distro packages and sync.
 install -m 0644 "${ROOT}/data/io.github.mizgo.MounThor.metainfo.xml" \
-    "${APPDIR}/usr/share/metainfo/"
+    "${APPDIR}/usr/share/metainfo/io.github.mizgo.MounThor.appdata.xml"
 install -m 0644 "${ROOT}/data/icons/hicolor/scalable/apps/io.github.mizgo.MounThor.svg" \
     "${APPDIR}/usr/share/icons/hicolor/scalable/apps/"
 install -m 0644 "${ROOT}/data/icons/hicolor/scalable/apps/io.github.mizgo.MounThor.svg" \

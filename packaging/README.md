@@ -102,7 +102,13 @@ The script assembles `dist/appimage/MounThor.AppDir/`, then uses
 `appimagetool` to create `dist/appimage/MounThor-<version>-x86_64.AppImage`.
 The AppImage contains MounThor, its mount helper, and desktop assets. It uses
 the target system's Python, PyGObject, GTK4, and libadwaita at runtime; it does
-not bundle those libraries. A PikaOS-built AppImage can therefore use Rocky
+not bundle those libraries. The AppImage build copies the canonical
+`*.metainfo.xml` into its AppDir as `*.appdata.xml`, the filename that
+`appimagetool` currently discovers for AppStream validation. The AppImage
+copy is made directly from the canonical metadata file, so the synchronizer's
+version and date updates carry through to the AppImage. 
+
+A PikaOS-built AppImage can therefore use Rocky
 9.8's older system libraries when the required runtime dependencies are
 installed and the AppImage runtime itself is compatible. Verify the result on
 the target distribution before release. Output is currently x86_64.
