@@ -1,5 +1,5 @@
 Name:           mounthor
-Version:        0.10.1
+Version:        0.10.2
 Release:        1%{?dist}
 Summary:        GTK4/libadwaita SMB/CIFS share manager
 License:        GPL-3.0-only
@@ -57,5 +57,5 @@ install -Dpm 0644 data/icons/hicolor/scalable/apps/io.github.mizgo.MounThor.svg 
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mizgo.MounThor.svg
 
 %changelog
-* Sat Oct 10 2026 MounThor contributors <mizgo@users.noreply.github.com> - 0.10.1-1
+* Sat Oct 10 2026 MounThor contributors <mizgo@users.noreply.github.com> - 0.10.2-1
 - Prepare native RPM packaging.

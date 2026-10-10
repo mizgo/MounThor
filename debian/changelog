@@ -1,4 +1,4 @@
-mounthor (0.10.1-1) unstable; urgency=medium
+mounthor (0.10.2-1) unstable; urgency=medium
 
   * Prepare native Debian package and AppImage distribution.
 
