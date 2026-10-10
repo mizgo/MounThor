@@ -64,7 +64,7 @@ LOGGER = logging.getLogger(
 APP_ID = "io.github.mizgo.MounThor"
 
 APP_NAME = "MounThor"
-APP_VERSION = "0.10.1"
+APP_VERSION = "0.10.2"
 APP_RELEASE_DATE = "10 October 2026"
 APP_AUTHOR = "mizgo"
 
@@ -119,6 +119,7 @@ HELPER_BIN = Path.home() / ".local" / "bin" / HELPER_NAME
 
 POLKIT_RULES_DIR = Path("/etc/polkit-1/rules.d")
 POLKIT_RULE_FILE = POLKIT_RULES_DIR / "60-mounthor.rules"
+POLKIT_RULE_CONFIG_KEY = "system_automount_polkit_rule_installed"
 
 USER_SYSTEMD_DIR = (
     Path(
@@ -279,10 +280,133 @@ def _secure_storage_available() -> bool:
 
         return True
 
-    except Exception:
-
+    except Exception as exc:
+        LOGGER.warning(
+            "Secret Service availability check failed: %s",
+            exc,
+        )
         return False
 
+
+def _polkit_rule_installed() -> bool:
+    """Check the system rule, falling back to our successful-install marker.
+
+    On some EL9 installations an unprivileged process cannot stat the
+    polkit rules directory.  Path.is_file() raises PermissionError there
+    (not False), so remember successful installation in the user config.
+    """
+
+    try:
+        cfg = load_config()
+        if (
+            POLKIT_RULE_CONFIG_KEY in cfg
+            and cfg.get(POLKIT_RULE_CONFIG_KEY) is not True
+        ):
+            return False
+        marker = cfg.get(POLKIT_RULE_CONFIG_KEY)
+    except Exception as config_exc:
+        LOGGER.warning(
+            "Could not read polkit rule installation marker: %s",
+            config_exc,
+        )
+        marker = None
+
+    try:
+        installed = POLKIT_RULE_FILE.is_file()
+    except PermissionError as exc:
+        LOGGER.info(
+            "Cannot inspect polkit rule as the current user: %s",
+            exc,
+        )
+        return marker is True
+
+    if installed:
+        return True
+
+    # The file is visible and absent, so a stale marker must not hide that.
+    return False
+
+
+def _remember_polkit_rule_installed() -> None:
+    try:
+        cfg = load_config()
+        cfg[POLKIT_RULE_CONFIG_KEY] = True
+        save_config(cfg)
+    except Exception as exc:
+        LOGGER.warning(
+            "Could not save polkit rule installation marker: %s",
+            exc,
+        )
+
+
+def _set_polkit_rule_marker(installed: bool) -> bool:
+    try:
+        cfg = load_config()
+        if installed:
+            cfg[POLKIT_RULE_CONFIG_KEY] = True
+        else:
+            cfg[POLKIT_RULE_CONFIG_KEY] = "removal-pending"
+        save_config(cfg)
+        return True
+    except Exception as exc:
+        LOGGER.warning(
+            "Could not update polkit rule installation marker: %s",
+            exc,
+        )
+        return False
+
+
+def _remove_polkit_rule() -> bool:
+    """Remove MounThor's privileged rule and clear its cached state."""
+
+    try:
+        rule_exists = POLKIT_RULE_FILE.is_file()
+    except PermissionError as exc:
+        LOGGER.info(
+            "Cannot inspect polkit rule before removal: %s",
+            exc,
+        )
+        rule_exists = (
+            POLKIT_RULE_CONFIG_KEY in load_config()
+        )
+
+    if rule_exists:
+        try:
+            result = subprocess.run(
+                _auth(["rm", "-f", str(POLKIT_RULE_FILE)]),
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except (subprocess.SubprocessError, OSError) as exc:
+            LOGGER.error("Could not remove polkit rule: %s", exc)
+            _set_polkit_rule_marker(False)
+            return False
+
+        if result.returncode != 0:
+            LOGGER.warning(
+                "Polkit rule removal was not authorized or failed: %s",
+                result.stderr.strip() or result.stdout.strip(),
+            )
+            # Force a fresh authorization on the next activation even if the
+            # user cancelled removal and the old root-owned rule remains.
+            _set_polkit_rule_marker(False)
+            return False
+
+    cfg = load_config()
+    cfg.pop(POLKIT_RULE_CONFIG_KEY, None)
+    try:
+        save_config(cfg)
+    except OSError as exc:
+        LOGGER.error(
+            "Polkit rule was removed, but its config marker could not be "
+            "cleared: %s",
+            exc,
+        )
+        return False
+
+    LOGGER.info("Removed MounThor polkit rule and its config marker.")
+    return True
 
 def _secret_service_probe() -> tuple[bool, str]:
     """Check the Secret Service endpoint without unlocking its collection."""
@@ -382,7 +506,7 @@ def _secure_delete_password(
     host: str,
     share: str,
     username: str,
-) -> None:
+) -> bool:
 
     connection = _secret_service_connection()
 
@@ -400,9 +524,14 @@ def _secure_delete_password(
         attributes
     )
 
+    deleted = False
     for item in items:
 
         item.delete()
+
+        deleted = True
+
+    return deleted
 
 
 # ============================================================================
@@ -1189,8 +1318,8 @@ def _ensure_polkit_rule() -> bool:
 
     """Install the per-user polkit rule (one-time pkexec prompt)."""
 
-    if POLKIT_RULE_FILE.is_file():
-
+    if _polkit_rule_installed():
+        _remember_polkit_rule_installed()
         return True
 
     runtime_dir = _runtime_directory()
@@ -1267,6 +1396,8 @@ def _ensure_polkit_rule() -> bool:
         f"Polkit rule installed at {POLKIT_RULE_FILE}"
     )
 
+    _remember_polkit_rule_installed()
+
     return True
 
 
@@ -1295,14 +1426,15 @@ def _automount_service_content() -> str:
     return (
         "[Unit]\n"
         "Description=MounThor - automount CIFS shares at login\n"
-        "After=default.target\n"
+        "After=graphical-session.target\n"
+        "PartOf=graphical-session.target\n"
         "\n"
         "[Service]\n"
         "Type=oneshot\n"
         f"ExecStart={autostart_command}\n"
         "\n"
         "[Install]\n"
-        "WantedBy=default.target\n"
+        "WantedBy=graphical-session.target\n"
     )
 
 
@@ -1337,6 +1469,23 @@ def _ensure_automount_service() -> bool:
                 "systemctl",
                 "--user",
                 "daemon-reload",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+
+        # Remove any earlier default.target enablement before installing the
+        # graphical-session target link.  This makes the oneshot run for each
+        # graphical login even when the per-user systemd manager stays alive
+        # across logout/login.
+        subprocess.run(
+            [
+                "systemctl",
+                "--user",
+                "disable",
+                AUTOMOUNT_SERVICE_NAME,
             ],
             capture_output=True,
             text=True,
@@ -1393,6 +1542,67 @@ def _disable_automount_service() -> None:
         LOGGER.warning(
             f"Failed to disable systemd unit: {exc}"
         )
+
+
+def _remove_system_automount_setup() -> bool:
+    """Remove the user unit and revoke its root polkit authorization."""
+
+    cfg = load_config()
+    if any(
+        isinstance(mount, dict)
+        and mount.get("system_automount") is True
+        for mount in cfg.get("mounts", [])
+    ):
+        LOGGER.info(
+            "Keeping shared automount authorization because at least one "
+            "share still has system automount enabled."
+        )
+        return True
+
+    success = True
+    try:
+        subprocess.run(
+            [
+                "systemctl",
+                "--user",
+                "disable",
+                "--now",
+                AUTOMOUNT_SERVICE_NAME,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        LOGGER.error("Could not stop and disable automount unit: %s", exc)
+        success = False
+
+    try:
+        AUTOMOUNT_SERVICE_FILE.unlink(missing_ok=True)
+        subprocess.run(
+            ["systemctl", "--user", "daemon-reload"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        LOGGER.error("Could not remove automount unit file: %s", exc)
+        success = False
+
+    try:
+        HELPER_BIN.unlink(missing_ok=True)
+    except OSError as exc:
+        LOGGER.error("Could not remove mount helper: %s", exc)
+        success = False
+
+    if not _remove_polkit_rule():
+        success = False
+
+    if success:
+        LOGGER.info("Removed the system automount setup.")
+    return success
 
 
 def _ensure_system_automount_ready() -> tuple[bool, str]:
@@ -5015,6 +5225,7 @@ class MounThorApp(
         )
 
         password_submitted = False
+        waiting_for_storage_choice = False
 
         def on_dialog_closed(
             _dialog,
@@ -5024,7 +5235,7 @@ class MounThorApp(
             # explicit Cancel button. Treat every dismissal before the
             # password is submitted as cancellation so the mount switch
             # cannot remain visually active.
-            if not password_submitted:
+            if not password_submitted and not waiting_for_storage_choice:
 
                 row.set_mounted(
                     False
@@ -5059,6 +5270,13 @@ class MounThorApp(
         def ask_insecure_storage(
             password,
         ):
+
+            nonlocal waiting_for_storage_choice
+
+            legacy_dialog = isinstance(dialog, _LegacyAdwDialog)
+            if legacy_dialog:
+                waiting_for_storage_choice = True
+                dialog.close()
 
             alert = create_alert_dialog(
                 heading=(
@@ -5106,7 +5324,11 @@ class MounThorApp(
                 response,
             ):
 
+                nonlocal waiting_for_storage_choice
+
                 if response == "none":
+
+                    waiting_for_storage_choice = False
 
                     complete_connect(
                         password,
@@ -5115,10 +5337,15 @@ class MounThorApp(
 
                 elif response == "plaintext":
 
+                    waiting_for_storage_choice = False
+
                     complete_connect(
                         password,
                         "plaintext",
                     )
+                elif legacy_dialog:
+                    waiting_for_storage_choice = False
+                    row.set_mounted(False)
 
             alert.connect(
                 "response",
@@ -5157,10 +5384,17 @@ class MounThorApp(
 
             try:
 
-                if (
-                    self.secret_service_enabled
-                    and _secure_storage_available()
-                ):
+                storage_available = _secure_storage_available()
+                LOGGER.info(
+                    "Password save storage check: "
+                    "secret_service_enabled=%s, dependency_installed=%s, "
+                    "service_available=%s",
+                    self.secret_service_enabled,
+                    HAS_SECRETSTORAGE,
+                    storage_available,
+                )
+
+                if self.secret_service_enabled and storage_available:
 
                     complete_connect(
                         password,
@@ -5173,7 +5407,13 @@ class MounThorApp(
                         password
                     )
 
-            except Exception:
+            except Exception as exc:
+
+                LOGGER.exception(
+                    "Password save fell back to the insecure "
+                    "storage choice after an unexpected error: %s",
+                    exc,
+                )
 
                 ask_insecure_storage(
                     password
@@ -5217,6 +5457,7 @@ class MounThorApp(
         entry: dict,
         on_stored,
         on_cancel=None,
+        parent_dialog=None,
     ):
 
         """Ask for the SMB password of a share that will automount at
@@ -5231,6 +5472,8 @@ class MounThorApp(
 
         host = entry.get("host") or ""
         share = entry.get("share") or ""
+        flow_completed = False
+        waiting_for_storage_choice = False
 
         dialog = create_dialog()
 
@@ -5299,17 +5542,30 @@ class MounThorApp(
         def on_cancel_pressed(
             _button,
         ):
+            cancel_password_prompt()
 
+        def cancel_password_prompt():
+            nonlocal flow_completed
+
+            if flow_completed:
+                return
+
+            flow_completed = True
             dialog.close()
 
             if on_cancel is not None:
-
                 on_cancel()
+
+        def on_password_dialog_closed(_dialog):
+            if not waiting_for_storage_choice:
+                cancel_password_prompt()
 
         def complete_store(
             password,
             credential_storage,
         ):
+
+            nonlocal flow_completed
 
             username = (
                 _get_effective_username(entry)
@@ -5363,8 +5619,8 @@ class MounThorApp(
                     exc,
                 )
 
-            # Fallback to plaintext config when secret service fails.
-            if not stored:
+            # Only persist plaintext when the user explicitly selected it.
+            if not stored and credential_storage == "plaintext":
 
                 try:
 
@@ -5414,6 +5670,7 @@ class MounThorApp(
 
                 return
 
+            flow_completed = True
             dialog.close()
 
             on_stored()
@@ -5421,6 +5678,13 @@ class MounThorApp(
         def ask_insecure_storage(
             password,
         ):
+
+            nonlocal waiting_for_storage_choice
+
+            legacy_dialog = isinstance(dialog, _LegacyAdwDialog)
+            if legacy_dialog:
+                waiting_for_storage_choice = True
+                dialog.close()
 
             alert = create_alert_dialog(
                 heading=(
@@ -5464,12 +5728,20 @@ class MounThorApp(
                 response,
             ):
 
+                nonlocal waiting_for_storage_choice
+
                 if response == "plaintext":
+
+                    waiting_for_storage_choice = False
 
                     complete_store(
                         password,
                         "plaintext",
                     )
+                elif response == "cancel":
+                    if legacy_dialog:
+                        waiting_for_storage_choice = False
+                        cancel_password_prompt()
 
             alert.connect(
                 "response",
@@ -5499,10 +5771,17 @@ class MounThorApp(
 
             try:
 
-                if (
-                    self.secret_service_enabled
-                    and _secure_storage_available()
-                ):
+                storage_available = _secure_storage_available()
+                LOGGER.info(
+                    "Automount password save storage check: "
+                    "secret_service_enabled=%s, dependency_installed=%s, "
+                    "service_available=%s",
+                    self.secret_service_enabled,
+                    HAS_SECRETSTORAGE,
+                    storage_available,
+                )
+
+                if self.secret_service_enabled and storage_available:
 
                     complete_store(
                         password,
@@ -5515,7 +5794,13 @@ class MounThorApp(
                         password
                     )
 
-            except Exception:
+            except Exception as exc:
+
+                LOGGER.exception(
+                    "Automount password save fell back to the insecure "
+                    "storage choice after an unexpected error: %s",
+                    exc,
+                )
 
                 ask_insecure_storage(
                     password
@@ -5524,6 +5809,11 @@ class MounThorApp(
         cancel_button.connect(
             "clicked",
             on_cancel_pressed,
+        )
+
+        dialog.connect(
+            "closed",
+            on_password_dialog_closed,
         )
 
         save_button.connect(
@@ -5545,8 +5835,18 @@ class MounThorApp(
             save_button,
         )
 
+        dialog_parent = self.win
+        if (
+            isinstance(dialog, _LegacyAdwDialog)
+            and isinstance(parent_dialog, _LegacyAdwDialog)
+        ):
+            # Rocky's libadwaita fallback uses separate Gtk.Windows. Make the
+            # password window transient for the open edit window so the
+            # window manager keeps it above that dialog.
+            dialog_parent = parent_dialog._window
+
         dialog.present(
-            self.win
+            dialog_parent
         )
 
     # =========================================================================
@@ -7501,7 +7801,7 @@ class MounThorApp(
 
                 if (
                     data["system_automount"]
-                    and not POLKIT_RULE_FILE.is_file()
+                    and not _polkit_rule_installed()
                 ):
 
                     def _revert_system_automount():
@@ -7541,7 +7841,21 @@ class MounThorApp(
                         if not ok:
 
                             _revert_system_automount()
+                            self.rebuild_rows()
 
+                            cfg_now = load_config()
+                            if not any(
+                                isinstance(mount, dict)
+                                and mount.get("system_automount") is True
+                                for mount in cfg_now.get("mounts", [])
+                            ):
+                                threading.Thread(
+                                    target=_remove_system_automount_setup,
+                                    name="automount-cleanup",
+                                    daemon=True,
+                                ).start()
+
+                        elif isinstance(dialog, _LegacyAdwDialog):
                             self.rebuild_rows()
 
                         self.toast(
@@ -7672,14 +7986,18 @@ class MounThorApp(
 
                         self._ask_automount_password(
                             share_entry,
-                            lambda: None,  # password stored; proceed to Polkit dialog
-                            on_cancel=lambda: None,
+                            _proceed,
+                            on_cancel=_revert_flipped_and_finish,
+                            parent_dialog=dialog,
                         )
                         return
 
-                    alert.present(
-                        self.win
-                    )
+                    if isinstance(dialog, _LegacyAdwDialog):
+                        dialog.close()
+                    alert.present(self.win)
+
+                    if isinstance(dialog, _LegacyAdwDialog):
+                        return
 
                 elif data["system_automount"]:
 
@@ -7713,15 +8031,26 @@ class MounThorApp(
                     ).start()
 
                 elif not now_any:
+                    if (
+                        any(old_autoflags.values())
+                        or cfg.get(POLKIT_RULE_CONFIG_KEY)
+                    ):
 
-                    def _worker():
+                        def _worker():
+                            if not _remove_system_automount_setup():
+                                GLib.idle_add(
+                                    lambda: self.toast(
+                                        "Automount is disabled, but its system "
+                                        "authorization could not be fully removed.",
+                                        error=True,
+                                    )
+                                )
 
-                        _disable_automount_service()
-
-                    threading.Thread(
-                        target=_worker,
-                        daemon=True,
-                    ).start()
+                        threading.Thread(
+                            target=_worker,
+                            name="automount-cleanup",
+                            daemon=True,
+                        ).start()
 
                 _finish_saved()
 
@@ -7746,6 +8075,7 @@ class MounThorApp(
                         on_cancel=lambda: (
                             _revert_flipped_and_finish()
                         ),
+                        parent_dialog=dialog,
                     )
 
                 ask_next(0)
@@ -8077,6 +8407,19 @@ class MounThorApp(
 
         self.rebuild_rows()
 
+        if entry.get("system_automount", False):
+            cfg = load_config()
+            if not any(
+                isinstance(mount, dict)
+                and mount.get("system_automount") is True
+                for mount in cfg.get("mounts", [])
+            ):
+                threading.Thread(
+                    target=_remove_system_automount_setup,
+                    name="automount-cleanup",
+                    daemon=True,
+                ).start()
+
         self.toast(
             f"Removed \u201c{entry.get('name', 'share')}\u201d"
         )
@@ -8167,7 +8510,7 @@ class MounThorApp(
         """
         passwords_removed = 0
         automount_disabled = False
-        saved = False
+        config_changed = False
 
         entry = row.entry
 
@@ -8179,8 +8522,15 @@ class MounThorApp(
 
         if storage == "secret-service" and self.secret_service_enabled:
             try:
-                _secure_delete_password(host, share, username)
-                passwords_removed += 1
+                if _secure_delete_password(host, share, username):
+                    passwords_removed += 1
+                if (
+                    entry.get("password")
+                    or entry.get("credential_storage") != "none"
+                ):
+                    entry["password"] = ""
+                    entry["credential_storage"] = "none"
+                    config_changed = True
             except Exception as exc:
                 LOGGER.warning(
                     "Could not delete Secret Service credential "
@@ -8190,24 +8540,28 @@ class MounThorApp(
                     exc,
                 )
 
-        elif storage == "plaintext":
-            if entry.get("password"):
+        elif storage != "secret-service":
+            had_password = bool(entry.get("password"))
+            if had_password:
                 entry["password"] = ""
                 passwords_removed += 1
+            if (
+                entry.get("credential_storage") != "none"
+                or had_password
+            ):
+                entry["credential_storage"] = "none"
+                entry["password"] = ""
+                config_changed = True
 
         if entry.get("system_automount", False):
-            _disable_automount_service()
+            entry["system_automount"] = False
             automount_disabled = True
-
-        if passwords_removed > 0 or automount_disabled:
-            self.save_current_rows()
-            self.rebuild_rows()
-            saved = True
+            config_changed = True
 
         return {
             "passwords_removed": passwords_removed,
             "automount_disabled": automount_disabled,
-            "saved": saved,
+            "saved": config_changed,
         }
 
     def _on_forget_passwords_action(
@@ -8239,14 +8593,39 @@ class MounThorApp(
 
         def on_confirmed():
             nonlocal total_passwords_removed, total_automount_disabled
+            config_changed = False
             for row in selected:
                 stats = self._forget_password_for_share(row)
                 total_passwords_removed += stats["passwords_removed"]
                 total_automount_disabled += stats["automount_disabled"]
+                config_changed = config_changed or stats["saved"]
 
-            if total_passwords_removed > 0 or total_automount_disabled > 0:
+            if config_changed:
                 self.save_current_rows()
                 self.rebuild_rows()
+
+            cfg = load_config()
+            any_system_automount = any(
+                isinstance(mount, dict)
+                and mount.get("system_automount") is True
+                for mount in cfg.get("mounts", [])
+            )
+            if total_automount_disabled and not any_system_automount:
+                def cleanup_worker():
+                    if not _remove_system_automount_setup():
+                        GLib.idle_add(
+                            lambda: self.toast(
+                                "Automount is disabled, but its system "
+                                "authorization could not be fully removed.",
+                                error=True,
+                            )
+                        )
+
+                threading.Thread(
+                    target=cleanup_worker,
+                    name="automount-cleanup",
+                    daemon=True,
+                ).start()
 
             self.deselect_all()
 
@@ -8312,7 +8691,15 @@ class MounThorApp(
 
         about.set_release_notes(
             "<p>New in this version:</p>"
-                "<p>This release introduces DEB, RPM, and AppImage packages alongside the existing shell script installer.</p>"
+                "<p>This release focuses on bug fixes.</p>"
+            "<ul>"
+                "<li>Fixed the application icon not appearing immediately after shell-script installation.</li>"
+                "<li>>Fixed password handling so saved credentials are recognized consistently across manual mounts, share settings, and system startup automount.</li>"
+                "<li>Fixed system startup automount on systems with older pacakges, including compatibility with Python 3.9 and older GTK/libadwaita versions.</li>"
+                "<li>Fixed Forget Passwords so it clears the saved credential state in both Secret Service and the JSON configuration.</li>"
+                "<li>System startup automount setup is now removed when it is no longer used. Enabling it again requests the required authorization.</li>"
+            "</ul>"
+            "<p>New in 0.10.1 release:</p>"
             "<ul>"
                 "<li>Added a new placeholder application icon.</li>"
                 "<li>Internal changes to support DEB, RPM, and AppImage packaging.</li>"
