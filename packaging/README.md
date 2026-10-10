@@ -4,7 +4,7 @@
 
 `APP_VERSION` and `APP_RELEASE_DATE` in the root `mounthor.py` are the single
 sources for the application's release version and date. Write the date as a
-full English date, for example `10 October 2026`. AppImage and source archive
+full English date, for example `10 October 2026`. AppImage and shell-installer archive
 filenames read `APP_VERSION` directly. Run the synchronizer after changing
 either value so package metadata and AppStream release information match:
 
@@ -36,16 +36,29 @@ its own location. The output paths below are relative to the project root.
 
 ## Build formats
 
-### Source archive
+### Shell-installer archive
 
 ```sh
-./packaging/build-source.sh
+./packaging/build-shell-installer.sh
 ```
 
-Creates `dist/MounThor-<version>-source.tar.gz`. It packages the application,
-install and helper scripts, desktop assets, Debian metadata, tools, and
-packaging files into a versioned source archive. This is a source distribution;
-it does not compile the application or install it.
+Creates `dist/MounThor-<version>-shell-installer.tar.gz`. This is a small
+installation bundle containing only the application, the per-user install and
+uninstall scripts, the launcher and mount helper, the desktop template, the
+MounThor icon, AppStream metadata, and the license. It excludes Debian/RPM/
+AppImage build definitions and development files.
+
+Extract the archive and run the installer from its root directory:
+
+```sh
+tar -xzf dist/MounThor-<version>-shell-installer.tar.gz
+cd MounThor-<version>-shell-installer
+./scripts/install-mounthor.sh
+```
+
+For a complete source snapshot of a commit or release tag, use `git archive` or
+the source archive provided by GitHub. This script prepares only the files
+needed for the shell-script installation.
 
 ### Debian package (`.deb`)
 
@@ -96,16 +109,15 @@ the target distribution before release. Output is currently x86_64.
 
 ## Per-user shell installer
 
-The installer is for installing directly from a checked-out or unpacked source
-tree, without a package manager or administrator privileges:
+The installer can be run from a checkout or from the shell-installer archive
+above, without a package manager or administrator privileges:
 
 ```sh
 ./scripts/install-mounthor.sh
 ```
 
 It installs the app under the user's XDG data directory and adds a launcher to
-`~/.local/bin`. It does not use the source archive produced by
-`build-source.sh`; that archive simply includes the installer for distribution.
+`~/.local/bin`.
 
 To remove the per-user installation:
 
