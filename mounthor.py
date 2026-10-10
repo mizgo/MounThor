@@ -47,7 +47,7 @@ LOGGER = logging.getLogger(
 # ============================================================================
 # Application constants and paths
 # ============================================================================
-# Core application metadata — used for GUI dialogs, service names, and CLI identification.
+# Core application metadata \u2014 used for GUI dialogs, service names, and CLI identification.
 
 # XDG-compliant configuration directory: ~/.config/mounthor
 # Falls back to ~/.config/mounthor when XDG_CONFIG_HOME is not set.
@@ -58,8 +58,8 @@ LOGGER = logging.getLogger(
 # Log file location within the state directory.
 
 # Determines which privilege escalation method to use for privileged operations:
-#   False (pkexec) — Polkit-based system authorization (recommended for desktop use)
-#   True  (sudo)   — sudo-based authorization (useful for headless/server environments)
+#   False (pkexec) \u2014 Polkit-based system authorization (recommended for desktop use)
+#   True  (sudo)   \u2014 sudo-based authorization (useful for headless/server environments)
 
 APP_ID = "io.github.mizgo.MounThor"
 
@@ -702,7 +702,7 @@ def _has_stored_password(
 # ============================================================================
 # Mount helpers
 # ============================================================================
-# Core mount and unmount operations — the heart of the application.
+# Core mount and unmount operations \u2014 the heart of the application.
 # do_mount(): Creates a temporary CIFS credential file and invokes /usr/bin/mount -t cifs.
 # do_unmount(): Verifies the correct mount is detected before invoking /usr/bin/umount.
 # Both functions return (ok, message) tuples for error reporting and UI feedback.
@@ -2225,6 +2225,36 @@ def create_about_dialog():
     return Adw.AboutWindow()
 
 
+def register_application_icon_search_path():
+    """Make the installed app icon discoverable in native and AppImage layouts."""
+    display = Gdk.Display.get_default()
+    if display is None:
+        return
+
+    icon_theme = Gtk.IconTheme.get_for_display(display)
+    data_home = Path(
+        os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))
+    )
+    search_paths = (
+        data_home / "icons",
+        Path(__file__).resolve().parents[2] / "share" / "icons",
+    )
+    current_paths = list(icon_theme.get_search_path() or [])
+
+    for search_path in search_paths:
+        icon_file = (
+            search_path
+            / "hicolor"
+            / "scalable"
+            / "apps"
+            / f"{APP_ID}.svg"
+        )
+        path_string = str(search_path)
+        if icon_file.is_file() and path_string not in current_paths:
+            icon_theme.add_search_path(path_string)
+            current_paths.append(path_string)
+
+
 # ============================================================================
 # GTK helpers
 # ============================================================================
@@ -2624,7 +2654,7 @@ class MountRow(
         self.set_subtitle(
             f"//{entry.get('host', '')}/"
             f"{entry.get('share', '')}"
-            f"  →  "
+            f"  \u2192  "
             f"{entry.get('path', '')}"
         )
         stabilize_action_row_measurement(self)
@@ -4275,7 +4305,7 @@ class MounThorApp(
     # =========================================================================
     # Mount / unmount
     # =========================================================================
-    # Core mount operation — creates a temporary CIFS credential file and
+    # Core mount operation \u2014 creates a temporary CIFS credential file and
     # invokes /usr/bin/mount -t cifs. The temp file is created with 0o600
     # permissions so only the current user can read it. After the mount
     # succeeds, the temp file is removed. The function returns (ok, message)
@@ -4391,7 +4421,7 @@ class MounThorApp(
 
             else:
 
-                # "keep" → do nothing, existing mount stays
+                # "keep" \u2192 do nothing, existing mount stays
                 row.set_mounted(
                     is_mounted(
                         row.entry.get(
@@ -4517,7 +4547,7 @@ class MounThorApp(
 
             return
 
-        # Unmount succeeded — now proceed with normal mount flow
+        # Unmount succeeded \u2014 now proceed with normal mount flow
         LOGGER.info(
             "Unmounted existing share, proceeding to mount //%s/%s",
             row.entry.get("host"),
@@ -5604,7 +5634,7 @@ class MounThorApp(
                 path, host, share
             ):
 
-                # Already mounted with same share — skip entirely
+                # Already mounted with same share \u2014 skip entirely
                 continue
 
             elif is_mounted(path):
@@ -5631,7 +5661,7 @@ class MounThorApp(
 
         if duplicate_groups:
 
-            # The user's toggle click already flipped the switch on —
+            # The user's toggle click already flipped the switch on \u2014
             # reset every selected row to its real mount state.
             for row in selected_rows:
 
@@ -5992,7 +6022,7 @@ class MounThorApp(
                 "Enter one password for the selected batch.\n\n"
                 f"It will be used for {missing_count} selected share(s) "
                 "without a saved password.\n\n"
-                f"First share: “{entry.get('name', 'Unnamed share')}”"
+                f"First share: \u201c{entry.get('name', 'Unnamed share')}\u201d"
             ),
             wrap=True,
             halign=Gtk.Align.START,
@@ -6281,7 +6311,7 @@ class MounThorApp(
             label=(
                 f"Share {number} of {total}\n\n"
                 f"Enter the password for\n"
-                f"“{entry.get('name', 'Unnamed share')}”\n\n"
+                f"\u201c{entry.get('name', 'Unnamed share')}\u201d\n\n"
                 f"//{entry.get('host', '')}/"
                 f"{entry.get('share', '')}"
             ),
@@ -6447,7 +6477,7 @@ class MounThorApp(
             )
 
         self.toast(
-            f"{operation_name}: connecting {len(rows)} share(s)…"
+            f"{operation_name}: connecting {len(rows)} share(s)\u2026"
         )
 
         def worker():
@@ -6579,7 +6609,7 @@ class MounThorApp(
     ):
 
         self.toast(
-            f"{operation_name}: disconnecting {len(rows)} share(s)…"
+            f"{operation_name}: disconnecting {len(rows)} share(s)\u2026"
         )
 
         items = [
@@ -6652,7 +6682,7 @@ class MounThorApp(
             )
 
         self.toast(
-            f"Disconnecting {len(rows)} share(s)…"
+            f"Disconnecting {len(rows)} share(s)\u2026"
         )
 
         items = [
@@ -7640,7 +7670,7 @@ class MounThorApp(
                         on_setup_choice,
                     )
 
-                    # Pre-check — if this share has no stored password,
+                    # Pre-check \u2014 if this share has no stored password,
                     share_entry = entry_from_data(data)
                     has_password = _has_stored_password(share_entry)
 
@@ -7810,7 +7840,7 @@ class MounThorApp(
         dialog = create_dialog()
 
         dialog.set_title(
-            f"Remove “{entry.get('name', 'share')}”?"
+            f"Remove \u201c{entry.get('name', 'share')}\u201d?"
         )
 
         dialog.set_content_width(
@@ -8054,7 +8084,7 @@ class MounThorApp(
         self.rebuild_rows()
 
         self.toast(
-            f"Removed “{entry.get('name', 'share')}”"
+            f"Removed \u201c{entry.get('name', 'share')}\u201d"
         )
 
         return False
@@ -8194,7 +8224,7 @@ class MounThorApp(
         selected = self.selected_mount_rows()
 
         if not selected:
-            # No explicit selection — operate on all shares
+            # No explicit selection \u2014 operate on all shares
             all_rows = list(self.rows.values())
             if not all_rows:
                 self.toast("No shares found.")
@@ -8273,8 +8303,9 @@ class MounThorApp(
             APP_NAME
         )
 
+        register_application_icon_search_path()
         about.set_application_icon(
-            "folder-remote-symbolic"
+            APP_ID
         )
 
         about.set_version(
@@ -8418,12 +8449,12 @@ class MounThorApp(
 # ============================================================================
 # Headless CLI entry point for login-time system automount.
 # Reads the configuration file and mounts all entries with "system_automount"
-# enabled. No GUI is involved — this runs at boot via systemd.
+# enabled. No GUI is involved \u2014 this runs at boot via systemd.
 # Returns a JSON summary (mounted/skipped/failed) to stdout for logging.
 # Exit code: 0 on success, 1 on configuration error.
 # Headless CLI entry point for login-time system automount.
 # Reads the configuration file and mounts all entries with "system_automount"
-# enabled. No GUI is involved — this runs at boot via systemd.
+# enabled. No GUI is involved \u2014 this runs at boot via systemd.
 # Returns a JSON summary (mounted/skipped/failed) to stdout for logging.
 # Exit code: 0 on success, 1 on configuration error.
 
