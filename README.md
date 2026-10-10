@@ -62,7 +62,8 @@ If `python3-secretstorage` is unavailable, MounThor offers a choice to continue 
 ## Requirements
 
 - Linux
-- Python 3
+- Python 3.9 or newer
+- PyGObject
 - GTK4
 - libadwaita
 - cifs-utils
@@ -103,7 +104,7 @@ MounThor is currently developed and tested with:
 
 - **RPM packages** are built on Rocky Linux 9.8 and target EL9-compatible systems.
 - **DEB packages** are built on PikaOS 4 and target modern Debian Sid-based distributions.
-- **AppImages** use the target system's Python, GTK, and libadwaita libraries. They should work on most systems with library versions ranging from those available in Rocky Linux 9.8 to those in PikaOS 4.
+- **AppImages** use the target system's Python, GTK, and libadwaita libraries. MounThor has been tested on PikaOS 4, a distribution with relatively bleeding-edge packages, and Rocky Linux 9.8, a conservative distribution with older packages. Other distributions have not been verified.
 
 ### Shell Script Installation
 
